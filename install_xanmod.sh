@@ -27,6 +27,12 @@ check_os() {
         log "Ошибка: Этот скрипт поддерживает только Ubuntu и Debian."
         exit 1
     fi
+    # Определение дистрибутива
+    if grep -q "Ubuntu" /etc/os-release; then
+        readonly DISTRO="ubuntu"
+    else
+        readonly DISTRO="debian"
+    fi
 }
 
 # Проверка архитектуры
@@ -37,13 +43,18 @@ check_architecture() {
     fi
 }
 
-# Проверка зависимостей
+# Проверка и установка зависимостей
 check_dependencies() {
-    local deps=(awk grep add-apt-repository apt-get)
+    local deps=(awk grep apt-get)
+    if [[ "$DISTRO" == "ubuntu" ]]; then
+        deps+=(add-apt-repository)
+    else
+        deps+=(curl gpg)
+    fi
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
-            log "Ошибка: Команда '$dep' не найдена"
-            exit 1
+            log "Установка недостающей зависимости: $dep"
+            apt-get install -y "$dep" || { log "Ошибка при установке $dep"; exit 1; }
         fi
     done
 }
@@ -86,14 +97,23 @@ install_kernel() {
     log "Определена PSABI версия: $PSABI_VERSION"
 
     # Добавление репозитория Xanmod
-    if ! grep -q "^deb .*/xanmod/kernel" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
-        log "Добавление PPA репозитория Xanmod..."
-        add-apt-repository -y ppa:xanmod/edge || { log "Ошибка при добавлении репозитория."; exit 1; }
-        system_update
+    if [[ "$DISTRO" == "ubuntu" ]]; then
+        if ! grep -q "^deb .*/xanmod/kernel" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
+            log "Добавление PPA репозитория Xanmod для Ubuntu..."
+            add-apt-repository -y ppa:xanmod/edge || { log "Ошибка при добавлении репозитория."; exit 1; }
+            apt-get update || { log "Ошибка при обновлении списка пакетов"; exit 1; }
+        fi
+    else
+        if [ ! -f "/etc/apt/trusted.gpg.d/xanmod-kernel.gpg" ]; then
+            log "Добавление репозитория Xanmod для Debian..."
+            curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg || { log "Ошибка при добавлении ключа"; exit 1; }
+            echo "deb http://deb.xanmod.org releases main" > /etc/apt/sources.list.d/xanmod-kernel.list || { log "Ошибка при добавлении репозитория"; exit 1; }
+            apt-get update || { log "Ошибка при обновлении списка пакетов"; exit 1; }
+        fi
     fi
 
     # Установка ядра
-    KERNEL_PACKAGE="linux-xanmod-$PSABI_VERSION"
+    KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
     log "Установка ядра $KERNEL_PACKAGE..."
     apt-get install -y "$KERNEL_PACKAGE" || { log "Ошибка при установке ядра."; exit 1; }
 
@@ -143,7 +163,7 @@ main() {
 
                 echo -e "\n\033[1;33mВНИМАНИЕ!\033[0m"
                 echo "Ядро Xanmod успешно установлено. Требуется перезагрузка."
-                echo "После перезагрузки, пожалуйста, запустите скрипт снова для настройки BBR3."
+                echo "После перезагрузки, пожалуйста, запустите скрипт снова для настройки BBR."
 
                 read -p "Нажмите Enter для перезагрузки системы..."
                 reboot
@@ -176,9 +196,6 @@ main() {
         reboot
     fi
 }
-
-# Установка обработчиков сигналов
-trap cleanup INT TERM QUIT
 
 # Запуск главной функции
 main
