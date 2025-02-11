@@ -1,12 +1,7 @@
 ```markdown
 # Xanmod Kernel Installer with BBR3
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-![Shell Script](https://img.shields.io/badge/Shell_Script-4EAA25?logo=gnu-bash&logoColor=white)
-
 Автоматическая установка ядра Xanmod с оптимизированными настройками TCP BBR3 для Ubuntu/Debian
-
-**Часть проекта [Server Scripts](https://github.com/gopnikgame/Server_scripts)**
 
 ## ✨ Особенности
 
