@@ -1,49 +1,119 @@
-# Server Scripts Collection
+### README для репозитория `Server_scripts`
 
-![GitHub last commit](https://img.shields.io/github/last-commit/gopnikgame/Server_scripts)
-![GitHub license](https://img.shields.io/github/license/gopnikgame/Server_scripts)
+---
 
-A collection of shell scripts for server optimization and kernel management, focused on Xanmod kernel installation and system performance enhancement.
+#### Оглавление
+1. [Описание](#описание)
+2. [Содержимое репозитория](#содержимое-репозитория)
+3. [Требования](#требования)
+4. [Установка и использование](#установка-и-использование)
+5. [Безопасность](#безопасность)
+6. [Лицензия](#лицензия)
 
-## 📌 Table of Contents
-- [Features](#-features)
-- [Requirements](#-requirements)
-- [Installation Scripts](#-installation-scripts)
-  - [Xanmod Kernel Installation](#xanmod-kernel-installation)
-  - [Kernel Restoration](#kernel-restoration)
-- [Safety Features](#-safety-features)
-- [Logging](#-logging)
-- [Recovery Guide](#-recovery-guide)
-- [Contributing](#-contributing)
-- [License](#-license)
+---
 
-## 🚀 Features
+## Описание
 
-### Xanmod Kernel Installation Script
-- Full system update and upgrade before installation
-- Automatic kernel backup creation
-- Xanmod kernel installation with PSABI version detection
-- BBR3 TCP congestion control configuration
-- Automated system cleanup
-- Multi-stage installation with proper reboots
-- Detailed logging of all operations
+Данный репозиторий содержит скрипты для управления ядром Linux, включая установку альтернативного ядра Xanmod и восстановление стандартного ядра системы. Скрипты написаны на Bash и предназначены для автоматизации процессов настройки сервера или рабочей станции.
 
-### Kernel Restoration Script
-- Automatic detection of available kernel backups
-- Simple restoration process
-- GRUB configuration update
-- Safe recovery options
+---
 
-## 📋 Requirements
+## Содержимое репозитория
 
-- Ubuntu/Debian based system
-- Root access (sudo)
-- Internet connection
-- Bash shell
+| Файл                | Назначение                                                                 |
+|---------------------|---------------------------------------------------------------------------|
+| `install_xanmod.sh` | Устанавливает альтернативное ядро Linux Xanmod с оптимизацией для производительности. |
+| `restore_kernel.sh` | Восстанавливает стандартное ядро Linux, установленное в системе по умолчанию. |
 
-## 💻 Installation Scripts
+---
 
-### Xanmod Kernel Installation
+## Требования
+
+Для успешной работы скриптов необходимо:
+
+- **Операционная система**: Linux (тестировалось на Debian/Ubuntu).
+- **Права суперпользователя**: Необходимы права `sudo` для выполнения команд.
+- **Зависимости**:
+  - `curl` или `wget` для загрузки файлов.
+  - `bash` для выполнения скриптов.
+  - Пакеты для управления ядром (`linux-headers`, `build-essential` и т.д.).
+
+---
+
+## Установка и использование
+
+### 1. Запуск без сохранения скрипта
+
+Вы можете запустить скрипты напрямую из GitHub без их сохранения на локальной машине:
+
+#### Установка Xanmod ядра:
+```bash
+curl -s https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/install_xanmod.sh | bash
+```
+
+или
 
 ```bash
 bash <(wget -qO- https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/install_xanmod.sh)
+```
+
+#### Восстановление стандартного ядра:
+```bash
+curl -s https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/restore_kernel.sh | bash
+```
+
+или
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/restore_kernel.sh)
+```
+
+### 2. Запуск после скачивания
+
+Если вы хотите сохранить скрипты локально:
+
+1. Скачайте нужный скрипт:
+   ```bash
+   wget https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/install_xanmod.sh
+   ```
+
+2. Дайте исполняемые права:
+   ```bash
+   chmod +x install_xanmod.sh
+   ```
+
+3. Выполните скрипт:
+   ```bash
+   sudo ./install_xanmod.sh
+   ```
+
+Аналогично для `restore_kernel.sh`.
+
+---
+
+## Безопасность
+
+1. **Проверка содержимого**: Перед выполнением любого скрипта из внешних источников рекомендуется проверить его содержимое:
+   ```bash
+   curl -s https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/install_xanmod.sh
+   ```
+
+2. **Использование sudo**: Некоторые операции требуют прав суперпользователя. Убедитесь, что вы понимаете, какие изменения будут внесены в систему.
+
+3. **Резервное копирование**: Перед изменением ядра рекомендуется создать резервную копию текущего состояния системы.
+
+---
+
+## Лицензия
+
+Этот проект распространяется под лицензией MIT. Подробнее см. файл [LICENSE](LICENSE).
+
+---
+
+## Контакты
+
+Если у вас есть вопросы или предложения по улучшению скриптов, пожалуйста, откройте issue в этом репозитории или свяжитесь с автором.
+
+---
+
+*Примечание: Используйте эти скрипты на свой страх и риск. Автор не несет ответственности за возможные проблемы, возникшие при их использовании.*
