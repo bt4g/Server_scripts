@@ -212,18 +212,37 @@ install_kernel() {
     log "Ядро успешно установлено. Требуется перезагрузка."
 }
 
-# Настройка BBR
+# Настройка BBR3
 configure_bbr() {
-    log "Настройка TCP BBR..."
-    echo "net.core.default_qdisc=fq" > "$SYSCTL_CONFIG"
-    echo "net.ipv4.tcp_congestion_control=bbr" >> "$SYSCTL_CONFIG"
-    sysctl --system || { log "Ошибка применения настроек"; exit 1; }
-
-    if [[ $(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}') != "bbr" ]]; then
-        log "Ошибка: BBR не активирован!"
+    log "Настройка TCP BBR3..."
+    
+    if ! grep -q "bbr" /proc/sys/net/ipv4/tcp_available_congestion_control; then
+        log "Ошибка: BBR не поддерживается в текущем ядре!"
         exit 1
     fi
-    log "Настройка BBR завершена успешно."
+
+    cat <<EOF > "$SYSCTL_CONFIG"
+# BBR3 Configuration
+net.core.default_qdisc = fq_pacing
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_ecn = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+EOF
+
+    sysctl --system || { log "Ошибка применения настроек"; exit 1; }
+
+    local current_cc=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
+    local current_qdisc=$(sysctl net.core.default_qdisc | awk '{print $3}')
+    
+    if [[ "$current_cc" == "bbr" ]] && [[ "$current_qdisc" == "fq_pacing" ]]; then
+        log "BBR3 успешно активирован!"
+    else
+        log "Ошибка: Не удалось активировать BBR3!"
+        log "Текущие настройки:"
+        log "Congestion Control: $current_cc"
+        log "Qdisc: $current_qdisc"
+        exit 1
+    fi
 }
 
 # Обработка аргументов
