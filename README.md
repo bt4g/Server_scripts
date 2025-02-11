@@ -1,4 +1,4 @@
-### README для репозитория `Server_scripts`
+### README
 
 ---
 
