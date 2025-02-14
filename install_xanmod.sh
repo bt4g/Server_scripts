@@ -17,81 +17,6 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $message" | tee -a "$LOG_FILE"
 }
 
-# Обработчик прерываний
-cleanup() {
-    if [[ "${1:-}" != "reboot" ]]; then
-        log "Скрипт прерван. Очистка временных файлов..."
-        rm -f "$STATE_FILE"
-        rm -f "$TEMP_SCRIPT"
-    fi
-    exit 1
-}
-trap 'cleanup' INT TERM EXIT
-
-# Создание сервиса автозапуска
-create_startup_service() {
-    log "Создание сервиса автозапуска..."
-    
-    # Определяем исходный скрипт
-    local source_script
-    if [ -f "$TEMP_SCRIPT" ]; then
-        source_script="$TEMP_SCRIPT"
-    else
-        source_script="$0"
-    fi
-
-    cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
-[Unit]
-Description=XanMod Kernel Installation Continuation
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=$SCRIPT_PATH --continue
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Копируем скрипт в системную директорию
-    if ! cp "$source_script" "$SCRIPT_PATH" 2>/dev/null; then
-        log "Ошибка: Не удалось скопировать скрипт в $SCRIPT_PATH"
-        exit 1
-    }
-    
-    chmod +x "$SCRIPT_PATH" || {
-        log "Ошибка: Не удалось установить права на исполнение для $SCRIPT_PATH"
-        exit 1
-    }
-    
-    # Активируем сервис
-    if ! systemctl daemon-reload; then
-        log "Ошибка: Не удалось перезагрузить systemd"
-        exit 1
-    }
-    
-    if ! systemctl enable "${SERVICE_NAME}.service"; then
-        log "Ошибка: Не удалось включить сервис ${SERVICE_NAME}"
-        exit 1
-    }
-    
-    log "Сервис автозапуска успешно создан"
-}
-
-# Удаление сервиса автозапуска
-remove_startup_service() {
-    log "Удаление сервиса автозапуска..."
-    if systemctl is-enabled "${SERVICE_NAME}.service" &>/dev/null; then
-        systemctl disable "${SERVICE_NAME}.service"
-        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-        systemctl daemon-reload
-    fi
-    [ -f "$SCRIPT_PATH" ] && rm -f "$SCRIPT_PATH"
-    [ -f "$TEMP_SCRIPT" ] && rm -f "$TEMP_SCRIPT"
-    log "Сервис автозапуска удален"
-}
-
 # Проверка прав root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -169,6 +94,73 @@ check_dependencies() {
     done
 }
 
+# Обработчик прерываний
+cleanup() {
+    if [[ "${1:-}" != "reboot" ]]; then
+        log "Скрипт прерван. Очистка временных файлов..."
+        rm -f "$STATE_FILE"
+        rm -f "$TEMP_SCRIPT"
+    fi
+    exit 1
+}
+
+trap cleanup INT TERM EXIT
+
+# Создание сервиса автозапуска
+create_startup_service() {
+    log "Создание сервиса автозапуска..."
+    
+    cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=XanMod Kernel Installation Continuation
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=$SCRIPT_PATH --continue
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Копируем скрипт в системную директорию
+    cp "$0" "$SCRIPT_PATH" 2>/dev/null || {
+        log "Ошибка: Не удалось скопировать скрипт в $SCRIPT_PATH"
+        exit 1
+    }
+    
+    chmod +x "$SCRIPT_PATH" || {
+        log "Ошибка: Не удалось установить права на исполнение для $SCRIPT_PATH"
+        exit 1
+    }
+    
+    systemctl daemon-reload || {
+        log "Ошибка: Не удалось перезагрузить systemd"
+        exit 1
+    }
+    
+    systemctl enable "${SERVICE_NAME}.service" || {
+        log "Ошибка: Не удалось включить сервис ${SERVICE_NAME}"
+        exit 1
+    }
+    
+    log "Сервис автозапуска успешно создан"
+}
+
+# Удаление сервиса автозапуска
+remove_startup_service() {
+    log "Удаление сервиса автозапуска..."
+    if systemctl is-enabled "${SERVICE_NAME}.service" &>/dev/null; then
+        systemctl disable "${SERVICE_NAME}.service"
+        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+        systemctl daemon-reload
+    fi
+    [ -f "$SCRIPT_PATH" ] && rm -f "$SCRIPT_PATH"
+    [ -f "$TEMP_SCRIPT" ] && rm -f "$TEMP_SCRIPT"
+    log "Сервис автозапуска удален"
+}
+
 # Обновление системы
 system_update() {
     log "Начало обновления системы..."
@@ -195,7 +187,6 @@ install_kernel() {
     PSABI_VERSION=$(get_psabi_version)
     log "Определена PSABI версия: $PSABI_VERSION"
 
-    # Добавление репозитория
     if [[ "$DISTRO" == "ubuntu" ]]; then
         if ! grep -q "^deb .*/xanmod/kernel" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
             log "Добавление PPA для Ubuntu..."
@@ -211,12 +202,10 @@ install_kernel() {
         fi
     fi
 
-    # Установка
     KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
     log "Установка пакета: $KERNEL_PACKAGE"
     apt-get install -y "$KERNEL_PACKAGE" || { log "Ошибка при установке ядра"; exit 1; }
 
-    # Обновление GRUB
     log "Обновление конфигурации GRUB..."
     update-grub || { log "Ошибка при обновлении GRUB"; exit 1; }
 
@@ -250,7 +239,6 @@ system_cleanup() {
 main() {
     local continue_installation=0
     
-    # Проверяем, запущен ли скрипт с флагом --continue
     if [[ "${1:-}" == "--continue" ]]; then
         continue_installation=1
     fi
@@ -266,7 +254,7 @@ main() {
         case $(cat "$STATE_FILE") in
             "update_complete")
                 log "Продолжение после перезагрузки..."
-                check_kernel || true  # Пропускаем ошибку проверки ядра
+                check_kernel || true
                 install_kernel
                 create_startup_service
                 trap 'cleanup reboot' EXIT
@@ -297,7 +285,7 @@ main() {
     fi
 }
 
-# Если скрипт запущен через pipe, сначала сохраняем его
+# Запуск скрипта
 if [ ! -t 0 ]; then
     cat > "$TEMP_SCRIPT"
     chmod +x "$TEMP_SCRIPT"
