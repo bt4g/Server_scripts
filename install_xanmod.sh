@@ -79,12 +79,7 @@ check_architecture() {
 
 # Проверка зависимостей
 check_dependencies() {
-    local deps=(awk grep apt-get)
-    if [[ "$DISTRO" == "ubuntu" ]]; then
-        deps+=(add-apt-repository)
-    else
-        deps+=(curl gpg)
-    fi
+    local deps=(awk grep apt-get software-properties-common curl gpg)
     
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
@@ -187,27 +182,34 @@ install_kernel() {
     PSABI_VERSION=$(get_psabi_version)
     log "Определена PSABI версия: $PSABI_VERSION"
 
-    if [[ "$DISTRO" == "ubuntu" ]]; then
-        if ! grep -q "^deb .*/xanmod/kernel" /etc/apt/sources.list /etc/apt/sources.list.d/*; then
-            log "Добавление PPA для Ubuntu..."
-            add-apt-repository -y ppa:xanmod/edge || { log "Ошибка при добавлении репозитория"; exit 1; }
-            apt-get update || { log "Ошибка при обновлении пакетов"; exit 1; }
-        fi
-    else
-        if [ ! -f "/etc/apt/trusted.gpg.d/xanmod-kernel.gpg" ]; then
-            log "Добавление репозитория для Debian..."
-            curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg || { log "Ошибка при добавлении ключа"; exit 1; }
-            echo "deb http://deb.xanmod.org releases main" > /etc/apt/sources.list.d/xanmod-kernel.list || { log "Ошибка при добавлении репозитория"; exit 1; }
-            apt-get update || { log "Ошибка при обновлении пакетов"; exit 1; }
-        fi
+    if [ ! -f "/etc/apt/trusted.gpg.d/xanmod-kernel.gpg" ]; then
+        log "Добавление ключа и репозитория XanMod..."
+        curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg || {
+            log "Ошибка при добавлении ключа"
+            exit 1
+        }
+        echo 'deb [signed-by=/etc/apt/trusted.gpg.d/xanmod-kernel.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-kernel.list || {
+            log "Ошибка при добавлении репозитория"
+            exit 1
+        }
+        apt-get update || {
+            log "Ошибка при обновлении пакетов"
+            exit 1
+        }
     fi
 
     KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
     log "Установка пакета: $KERNEL_PACKAGE"
-    apt-get install -y "$KERNEL_PACKAGE" || { log "Ошибка при установке ядра"; exit 1; }
+    apt-get install -y "$KERNEL_PACKAGE" || {
+        log "Ошибка при установке ядра"
+        exit 1
+    }
 
     log "Обновление конфигурации GRUB..."
-    update-grub || { log "Ошибка при обновлении GRUB"; exit 1; }
+    update-grub || {
+        log "Ошибка при обновлении GRUB"
+        exit 1
+    }
 
     echo "kernel_installed" > "$STATE_FILE"
     log "Ядро успешно установлено. Требуется перезагрузка."
@@ -285,7 +287,7 @@ main() {
     fi
 }
 
-# Сохранение и запуск скрипта
+# Запуск скрипта
 if [ ! -t 0 ]; then
     # Если скрипт запущен через pipe
     tee "$TEMP_SCRIPT" > /dev/null
