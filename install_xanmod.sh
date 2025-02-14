@@ -7,6 +7,8 @@ exec > >(tee -a "/var/log/xanmod_install.log") 2>&1
 readonly STATE_FILE="/var/tmp/xanmod_install_state"
 readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-bbr.conf"
+readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
+readonly SERVICE_NAME="xanmod-install-continue"
 
 # Функция логирования
 log() {
@@ -16,11 +18,48 @@ log() {
 
 # Обработчик прерываний
 cleanup() {
-    log "Скрипт прерван. Очистка временных файлов..."
-    rm -f "$STATE_FILE"
+    if [[ "${1:-}" != "reboot" ]]; then
+        log "Скрипт прерван. Очистка временных файлов..."
+        rm -f "$STATE_FILE"
+    fi
     exit 1
 }
-trap cleanup INT TERM EXIT
+trap 'cleanup' INT TERM EXIT
+
+# Создание сервиса автозапуска
+create_startup_service() {
+    cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=XanMod Kernel Installation Continuation
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=$SCRIPT_PATH --continue
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Копируем текущий скрипт в системную директорию
+    cp "$0" "$SCRIPT_PATH"
+    chmod +x "$SCRIPT_PATH"
+    
+    # Активируем сервис
+    systemctl daemon-reload
+    systemctl enable "${SERVICE_NAME}.service"
+}
+
+# Удаление сервиса автозапуска
+remove_startup_service() {
+    if systemctl is-enabled "${SERVICE_NAME}.service" &>/dev/null; then
+        systemctl disable "${SERVICE_NAME}.service"
+        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+        systemctl daemon-reload
+    fi
+    [ -f "$SCRIPT_PATH" ] && rm -f "$SCRIPT_PATH"
+}
 
 # Проверка прав root
 check_root() {
@@ -37,8 +76,9 @@ check_kernel() {
     
     if [[ "$installed_kernel" != "" && "$installed_kernel" != "$current_kernel" ]]; then
         log "ВНИМАНИЕ: Система не загружена на ядре Xanmod. Текущее ядро: $current_kernel"
-        exit 1
+        return 1
     fi
+    return 0
 }
 
 # Проверка интернет-соединения
@@ -102,18 +142,10 @@ check_dependencies() {
 system_update() {
     log "Начало обновления системы..."
     apt-get update || { log "Ошибка при выполнении apt-get update"; exit 1; }
-    apt-get upgrade -y || { log "Ошибка при выполнении apt-get upgrade"; exit 1; }
-    apt-get dist-upgrade -y || { log "Ошибка при выполнении apt-get dist-upgrade"; exit 1; }
+    # Убран upgrade и dist-upgrade согласно требованиям
     apt-get autoclean -y || { log "Ошибка при выполнении apt-get autoclean"; exit 1; }
     apt-get autoremove -y || { log "Ошибка при выполнении apt-get autoremove"; exit 1; }
     log "Обновление системы завершено успешно"
-}
-
-# Очистка системы
-system_cleanup() {
-    log "Начало очистки системы..."
-    apt-get autoremove --purge -y || { log "Ошибка при выполнении apt-get autoremove --purge"; exit 1; }
-    log "Очистка системы завершена успешно"
 }
 
 # Определение PSABI версии
@@ -176,8 +208,23 @@ configure_bbr() {
     log "Настройка BBR завершена успешно."
 }
 
+# Очистка системы
+system_cleanup() {
+    log "Начало очистки системы..."
+    apt-get autoremove --purge -y || { log "Ошибка при выполнении apt-get autoremove --purge"; exit 1; }
+    remove_startup_service
+    log "Очистка системы завершена успешно"
+}
+
 # Главная функция
 main() {
+    local continue_installation=0
+    
+    # Проверяем, запущен ли скрипт с флагом --continue
+    if [[ "${1:-}" == "--continue" ]]; then
+        continue_installation=1
+    fi
+
     check_root
     check_internet
     check_disk_space
@@ -189,30 +236,35 @@ main() {
         case $(cat "$STATE_FILE") in
             "update_complete")
                 log "Продолжение после перезагрузки..."
-                rm -f "$STATE_FILE"
-                check_kernel
+                check_kernel || true  # Пропускаем ошибку проверки ядра
                 install_kernel
-
-                echo -e "\n\033[1;33m[ВНИМАНИЕ]\033[0m Требуется перезагрузка для активации ядра."
-                read -p "Нажмите Enter для перезагрузки..."
+                create_startup_service
+                trap 'cleanup reboot' EXIT
+                log "Перезагрузка системы..."
                 reboot
                 ;;
             "kernel_installed")
                 log "Завершающий этап: Настройка BBR"
-                configure_bbr
-                system_cleanup
-                rm -f "$STATE_FILE"
-                log "Установка успешно завершена!"
+                if check_kernel; then
+                    configure_bbr
+                    system_cleanup
+                    rm -f "$STATE_FILE"
+                    log "Установка успешно завершена!"
+                else
+                    log "Ошибка: Система не загружена на ядре XanMod"
+                    exit 1
+                fi
                 ;;
         esac
-    else
+    elif [[ $continue_installation -eq 0 ]]; then
         log "Начало установки..."
         system_update
         echo "update_complete" > "$STATE_FILE"
-        echo -e "\n\033[1;33m[ВНИМАНИЕ]\033[0m Требуется первая перезагрузка."
-        read -p "Нажмите Enter для перезагрузки..."
+        create_startup_service
+        trap 'cleanup reboot' EXIT
+        log "Перезагрузка системы..."
         reboot
     fi
 }
 
-main
+main "$@"
