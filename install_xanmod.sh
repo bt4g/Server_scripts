@@ -2,7 +2,7 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Last Updated: 2025-02-14
+# Created: 2025-02-14 22:38:54 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 
 set -euo pipefail
@@ -41,7 +41,8 @@ check_internet() {
 # Проверка свободного места
 check_disk_space() {
     local required_space=2000  # 2GB в MB
-    local available_space=$(df --output=avail -m / | awk 'NR==2 {print $1}')
+    local available_space
+    available_space=$(df --output=avail -m / | awk 'NR==2 {print $1}')
     
     if (( available_space < required_space )); then
         log "Ошибка: Недостаточно свободного места (минимум 2 ГБ)"
@@ -49,29 +50,33 @@ check_disk_space() {
     fi
 }
 
-# Проверка ОС
-check_os() {
-    if ! grep -E -q "Ubuntu|Debian" /etc/os-release; then
-        log "Ошибка: Этот скрипт поддерживает только Ubuntu и Debian"
+# Определение доступных версий ядра
+get_available_kernels() {
+    log "Получение списка доступных версий ядра..."
+    apt-get update -qq || { log "Ошибка при обновлении списка пакетов"; exit 1; }
+    
+    local kernels
+    kernels=$(apt-cache search linux-xanmod | grep '^linux-xanmod' | cut -d ' ' -f 1 | grep -v 'headers\|image')
+    
+    if [ -z "$kernels" ]; then
+        log "Ошибка: Не удалось получить список доступных версий"
         exit 1
     fi
-}
-
-# Проверка архитектуры
-check_architecture() {
-    if [ "$(uname -m)" != "x86_64" ]; then
-        log "Ошибка: Поддерживается только x86_64 архитектура"
-        exit 1
-    fi
+    
+    echo "$kernels"
 }
 
 # Определение PSABI версии
 get_psabi_version() {
     local level=1
-    local flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2)
-    if [[ $flags =~ avx512 ]]; then level=4
-    elif [[ $flags =~ avx2 ]]; then level=3
-    elif [[ $flags =~ sse4_2 ]]; then level=2
+    local flags
+    flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2)
+    if [[ $flags =~ avx512 ]]; then 
+        level=4
+    elif [[ $flags =~ avx2 ]]; then 
+        level=3
+    elif [[ $flags =~ sse4_2 ]]; then 
+        level=2
     fi
     echo "x64v$level"
 }
@@ -79,6 +84,7 @@ get_psabi_version() {
 # Функция выбора версии ядра
 select_kernel_version() {
     log "Выбор версии ядра XanMod"
+    local PSABI_VERSION
     PSABI_VERSION=$(get_psabi_version)
     log "Рекомендуемая PSABI версия для вашего процессора: ${PSABI_VERSION}"
     
@@ -90,8 +96,9 @@ select_kernel_version() {
     echo "5) Показать все доступные версии"
     
     local choice
-    read -p "Выберите версию ядра (1-5, по умолчанию 1): " choice
+    read -rp "Выберите версию ядра (1-5, по умолчанию 1): " choice
     
+    local KERNEL_PACKAGE
     case $choice in
         2)
             KERNEL_PACKAGE="linux-xanmod-edge-${PSABI_VERSION}"
@@ -104,7 +111,8 @@ select_kernel_version() {
             ;;
         5)
             echo -e "\nВсе доступные версии:"
-            local all_versions=($(get_available_kernels))
+            local all_versions
+            mapfile -t all_versions < <(get_available_kernels)
             local i=1
             for version in "${all_versions[@]}"; do
                 echo "$i) $version"
@@ -112,7 +120,7 @@ select_kernel_version() {
             done
             
             local max=$((${#all_versions[@]}))
-            read -p "Выберите версию (1-$max): " subchoice
+            read -rp "Выберите версию (1-$max): " subchoice
             
             if [[ "$subchoice" =~ ^[0-9]+$ ]] && [ "$subchoice" -ge 1 ] && [ "$subchoice" -le $max ]; then
                 KERNEL_PACKAGE="${all_versions[$((subchoice-1))]}"
@@ -126,8 +134,7 @@ select_kernel_version() {
             ;;
     esac
     
-    log "Выбрана версия ядра: $KERNEL_PACKAGE"
-    return 0
+    echo "$KERNEL_PACKAGE"
 }
 
 # Установка ядра
@@ -150,7 +157,8 @@ install_kernel() {
         }
     fi
 
-    select_kernel_version
+    local KERNEL_PACKAGE
+    KERNEL_PACKAGE=$(select_kernel_version)
 
     log "Установка пакета: $KERNEL_PACKAGE"
     apt-get install -y "$KERNEL_PACKAGE" || {
@@ -168,7 +176,7 @@ install_kernel() {
     log "Ядро успешно установлено. Требуется перезагрузка."
 }
 
-# Настройка BBR v3
+# Настройка BBR
 configure_bbr() {
     log "Настройка TCP BBR..."
     
@@ -176,7 +184,7 @@ configure_bbr() {
     if ! uname -r | grep -q "xanmod"; then
         log "Ошибка: Не обнаружено ядро XanMod"
         exit 1
-    }
+    fi
     
     # Создаем конфигурационный файл для sysctl
     cat > "$SYSCTL_CONFIG" <<EOF
@@ -205,8 +213,10 @@ EOF
     sysctl --system || { log "Ошибка применения настроек sysctl"; exit 1; }
 
     # Проверяем активацию BBR3
-    local current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
-    local current_qdisc=$(sysctl -n net.core.default_qdisc)
+    local current_cc
+    current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
+    local current_qdisc
+    current_qdisc=$(sysctl -n net.core.default_qdisc)
 
     if [[ "$current_cc" != "bbr3" ]]; then
         log "Ошибка: BBR3 не активирован! Текущий алгоритм: $current_cc"
@@ -228,9 +238,12 @@ EOF
 check_bbr_version() {
     log "Проверка версии BBR..."
     
-    local current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
-    local available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control)
-    local current_qdisc=$(sysctl -n net.core.default_qdisc)
+    local current_cc
+    current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
+    local available_cc
+    available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control)
+    local current_qdisc
+    current_qdisc=$(sysctl -n net.core.default_qdisc)
     
     log "Текущий алгоритм управления перегрузкой: $current_cc"
     log "Доступные алгоритмы: $available_cc"
@@ -325,7 +338,6 @@ main() {
     check_internet
     check_disk_space
     check_os
-    check_architecture
 
     if [[ -f "$STATE_FILE" ]]; then
         case $(cat "$STATE_FILE") in
