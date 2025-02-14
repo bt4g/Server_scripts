@@ -10,6 +10,16 @@ readonly SYSCTL_CONFIG="/etc/sysctl.d/99-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
 
+# Получаем полный путь к текущему скрипту
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SCRIPT_SOURCE" ]; do
+    SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_SOURCE" )" && pwd )"
+    SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+    [[ $SCRIPT_SOURCE != /* ]] && SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE"
+done
+SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_SOURCE" )" && pwd )"
+SCRIPT_FULL_PATH="$SCRIPT_DIR/$(basename "$SCRIPT_SOURCE")"
+
 # Функция логирования
 log() {
     local message="$1"
@@ -28,6 +38,13 @@ trap 'cleanup' INT TERM EXIT
 
 # Создание сервиса автозапуска
 create_startup_service() {
+    # Проверяем существование исходного файла
+    if [ ! -f "$SCRIPT_FULL_PATH" ]; then
+        log "Ошибка: Не удается найти исходный файл скрипта: $SCRIPT_FULL_PATH"
+        exit 1
+    }
+
+    log "Создание сервиса автозапуска..."
     cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=XanMod Kernel Installation Continuation
@@ -42,29 +59,47 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-    # Копируем текущий скрипт в системную директорию
-    cp "$0" "$SCRIPT_PATH"
-    chmod +x "$SCRIPT_PATH"
+    # Копируем скрипт в системную директорию с выводом ошибок
+    if ! cp "$SCRIPT_FULL_PATH" "$SCRIPT_PATH" 2>/dev/null; then
+        log "Ошибка: Не удалось скопировать скрипт в $SCRIPT_PATH"
+        exit 1
+    }
+    
+    chmod +x "$SCRIPT_PATH" || {
+        log "Ошибка: Не удалось установить права на исполнение для $SCRIPT_PATH"
+        exit 1
+    }
     
     # Активируем сервис
-    systemctl daemon-reload
-    systemctl enable "${SERVICE_NAME}.service"
+    if ! systemctl daemon-reload; then
+        log "Ошибка: Не удалось перезагрузить systemd"
+        exit 1
+    }
+    
+    if ! systemctl enable "${SERVICE_NAME}.service"; then
+        log "Ошибка: Не удалось включить сервис ${SERVICE_NAME}"
+        exit 1
+    }
+    
+    log "Сервис автозапуска успешно создан"
 }
 
 # Удаление сервиса автозапуска
 remove_startup_service() {
+    log "Удаление сервиса автозапуска..."
     if systemctl is-enabled "${SERVICE_NAME}.service" &>/dev/null; then
         systemctl disable "${SERVICE_NAME}.service"
         rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
         systemctl daemon-reload
     fi
     [ -f "$SCRIPT_PATH" ] && rm -f "$SCRIPT_PATH"
+    log "Сервис автозапуска удален"
 }
 
 # Проверка прав root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        log "Ошибка: Этот скрипт должен быть запущен с правами root."
+        log "Ошибка: Этот скрипт должен быть запущен с правами root"
         exit 1
     fi
 }
@@ -84,7 +119,7 @@ check_kernel() {
 # Проверка интернет-соединения
 check_internet() {
     if ! ping -c1 -W3 google.com &>/dev/null; then
-        log "Ошибка: Нет подключения к интернету."
+        log "Ошибка: Нет подключения к интернету"
         exit 1
     fi
 }
@@ -95,7 +130,7 @@ check_disk_space() {
     local available_space=$(df --output=avail -m / | awk 'NR==2 {print $1}')
     
     if (( available_space < required_space )); then
-        log "Ошибка: Недостаточно свободного места (минимум 2 ГБ)."
+        log "Ошибка: Недостаточно свободного места (минимум 2 ГБ)"
         exit 1
     fi
 }
@@ -103,7 +138,7 @@ check_disk_space() {
 # Проверка ОС
 check_os() {
     if ! grep -E -q "Ubuntu|Debian" /etc/os-release; then
-        log "Ошибка: Этот скрипт поддерживает только Ubuntu и Debian."
+        log "Ошибка: Этот скрипт поддерживает только Ubuntu и Debian"
         exit 1
     fi
     if grep -q "Ubuntu" /etc/os-release; then
@@ -116,7 +151,7 @@ check_os() {
 # Проверка архитектуры
 check_architecture() {
     if [ "$(uname -m)" != "x86_64" ]; then
-        log "Ошибка: Поддерживается только x86_64 архитектура."
+        log "Ошибка: Поддерживается только x86_64 архитектура"
         exit 1
     fi
 }
@@ -142,7 +177,6 @@ check_dependencies() {
 system_update() {
     log "Начало обновления системы..."
     apt-get update || { log "Ошибка при выполнении apt-get update"; exit 1; }
-    # Убран upgrade и dist-upgrade согласно требованиям
     apt-get autoclean -y || { log "Ошибка при выполнении apt-get autoclean"; exit 1; }
     apt-get autoremove -y || { log "Ошибка при выполнении apt-get autoremove"; exit 1; }
     log "Обновление системы завершено успешно"
@@ -205,7 +239,7 @@ configure_bbr() {
         log "Ошибка: BBR не активирован!"
         exit 1
     fi
-    log "Настройка BBR завершена успешно."
+    log "Настройка BBR завершена успешно"
 }
 
 # Очистка системы
