@@ -27,13 +27,13 @@ check_root() {
 
 # Проверка загруженного ядра
 check_kernel() {
-    local installed_kernel=$(ls /boot/vmlinuz-* 2>/dev/null | grep "xanmod" | sort -V | tail -n1 | awk -F'-' '{print $2"-"$3}')
     local current_kernel=$(uname -r)
     
-    if [[ "$installed_kernel" != "" && "$installed_kernel" != "$current_kernel" ]]; then
+    if [[ "$current_kernel" != *"xanmod"* ]]; then
         log "ВНИМАНИЕ: Система не загружена на ядре Xanmod. Текущее ядро: $current_kernel"
         return 1
     fi
+    log "Текущее ядро: $current_kernel - это ядро XanMod"
     return 0
 }
 
