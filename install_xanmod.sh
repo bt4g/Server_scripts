@@ -101,6 +101,86 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
+# Определение PSABI версии
+get_psabi_version() {
+    local level=1
+    local flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2)
+    if [[ $flags =~ avx512 ]]; then level=4
+    elif [[ $flags =~ avx2 ]]; then level=3
+    elif [[ $flags =~ sse4_2 ]]; then level=2
+    fi
+    echo "x64v$level"
+}
+
+# Определение доступных версий ядра
+get_available_kernels() {
+    log "Получение списка доступных версий ядра..."
+    apt-get update -qq || { log "Ошибка при обновлении списка пакетов"; exit 1; }
+    
+    local versions=$(apt-cache search linux-xanmod | grep '^linux-xanmod' | cut -d ' ' -f 1 | grep -v 'headers\|image')
+    
+    if [ -z "$versions" ]; then
+        log "Ошибка: Не удалось получить список доступных версий"
+        exit 1
+    fi
+    
+    echo "$versions"
+}
+
+# Функция выбора версии ядра
+select_kernel_version() {
+    log "Выбор версии ядра XanMod"
+    PSABI_VERSION=$(get_psabi_version)
+    log "Рекомендуемая PSABI версия для вашего процессора: ${PSABI_VERSION}"
+    
+    echo -e "\nДоступные версии ядра XanMod:"
+    echo "1) linux-xanmod-${PSABI_VERSION} (Стабильная версия)"
+    echo "2) linux-xanmod-edge-${PSABI_VERSION} (Версия с новейшими функциями)"
+    echo "3) linux-xanmod-rt-${PSABI_VERSION} (Версия с поддержкой реального времени)"
+    echo "4) linux-xanmod-lts-${PSABI_VERSION} (Версия с долгосрочной поддержкой)"
+    echo "5) Показать все доступные версии"
+    
+    local choice
+    read -p "Выберите версию ядра (1-5, по умолчанию 1): " choice
+    
+    case $choice in
+        2)
+            KERNEL_PACKAGE="linux-xanmod-edge-${PSABI_VERSION}"
+            ;;
+        3)
+            KERNEL_PACKAGE="linux-xanmod-rt-${PSABI_VERSION}"
+            ;;
+        4)
+            KERNEL_PACKAGE="linux-xanmod-lts-${PSABI_VERSION}"
+            ;;
+        5)
+            echo -e "\nВсе доступные версии:"
+            local all_versions=($(get_available_kernels))
+            local i=1
+            for version in "${all_versions[@]}"; do
+                echo "$i) $version"
+                ((i++))
+            done
+            
+            local max=$((${#all_versions[@]}))
+            read -p "Выберите версию (1-$max): " subchoice
+            
+            if [[ "$subchoice" =~ ^[0-9]+$ ]] && [ "$subchoice" -ge 1 ] && [ "$subchoice" -le $max ]; then
+                KERNEL_PACKAGE="${all_versions[$((subchoice-1))]}"
+            else
+                log "Неверный выбор. Используется стандартная версия."
+                KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
+            fi
+            ;;
+        *)
+            KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
+            ;;
+    esac
+    
+    log "Выбрана версия ядра: $KERNEL_PACKAGE"
+    return 0
+}
+
 # Создание сервиса автозапуска
 create_startup_service() {
     log "Создание сервиса автозапуска..."
@@ -119,7 +199,6 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-    # Копируем скрипт в системную директорию
     cp "$0" "$SCRIPT_PATH" 2>/dev/null || {
         log "Ошибка: Не удалось скопировать скрипт в $SCRIPT_PATH"
         exit 1
@@ -156,32 +235,10 @@ remove_startup_service() {
     log "Сервис автозапуска удален"
 }
 
-# Обновление системы
-system_update() {
-    log "Начало обновления системы..."
-    apt-get update || { log "Ошибка при выполнении apt-get update"; exit 1; }
-    apt-get autoclean -y || { log "Ошибка при выполнении apt-get autoclean"; exit 1; }
-    apt-get autoremove -y || { log "Ошибка при выполнении apt-get autoremove"; exit 1; }
-    log "Обновление системы завершено успешно"
-}
-
-# Определение PSABI версии
-get_psabi_version() {
-    local level=1
-    local flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2)
-    if [[ $flags =~ avx512 ]]; then level=4
-    elif [[ $flags =~ avx2 ]]; then level=3
-    elif [[ $flags =~ sse4_2 ]]; then level=2
-    fi
-    echo "x64v$level"
-}
-
 # Установка ядра
 install_kernel() {
     log "Начало установки ядра Xanmod..."
-    PSABI_VERSION=$(get_psabi_version)
-    log "Определена PSABI версия: $PSABI_VERSION"
-
+    
     if [ ! -f "/etc/apt/trusted.gpg.d/xanmod-kernel.gpg" ]; then
         log "Добавление ключа и репозитория XanMod..."
         curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg || {
@@ -198,7 +255,8 @@ install_kernel() {
         }
     fi
 
-    KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
+    select_kernel_version
+
     log "Установка пакета: $KERNEL_PACKAGE"
     apt-get install -y "$KERNEL_PACKAGE" || {
         log "Ошибка при установке ядра"
@@ -213,6 +271,15 @@ install_kernel() {
 
     echo "kernel_installed" > "$STATE_FILE"
     log "Ядро успешно установлено. Требуется перезагрузка."
+}
+
+# Обновление системы
+system_update() {
+    log "Начало обновления системы..."
+    apt-get update || { log "Ошибка при выполнении apt-get update"; exit 1; }
+    apt-get autoclean -y || { log "Ошибка при выполнении apt-get autoclean"; exit 1; }
+    apt-get autoremove -y || { log "Ошибка при выполнении apt-get autoremove"; exit 1; }
+    log "Обновление системы завершено успешно"
 }
 
 # Настройка BBR
@@ -255,7 +322,7 @@ main() {
     if [[ -f "$STATE_FILE" ]]; then
         case $(cat "$STATE_FILE") in
             "update_complete")
-                log "Продолжение после перезагрузки..."
+                log "Продолжение после обновления системы..."
                 check_kernel || true
                 install_kernel
                 create_startup_service
