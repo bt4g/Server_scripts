@@ -30,7 +30,6 @@
 ```bash
 wget -O install_xanmod.sh https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/install_xanmod.sh
 ```
-```
 
 2. Сделайте скрипт исполняемым:
 ```bash
