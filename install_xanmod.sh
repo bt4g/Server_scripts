@@ -2,28 +2,28 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-14 22:49:18 UTC
-# Last Modified: 2025-02-14 22:49:18 UTC
-# Repository: https://github.com/gopnikgame/Server_scripts
+# Created: 2025-02-14 23:10:53 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
+# Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
-# Usage: curl -o install_xanmod.sh -L https://git.io/JoVK9 && chmod +x install_xanmod.sh && sudo ./install_xanmod.sh
 
 set -euo pipefail
-exec > >(tee -a "/var/log/xanmod_install.log") 2>&1
 
 # Константы
+readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_AUTHOR="gopnikgame"
 readonly STATE_FILE="/var/tmp/xanmod_install_state"
 readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly VERSION="1.0.0"
+
+# Перенаправление вывода в лог
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Функция логирования
 log() {
-    local message="$1"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] - $message" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] - $1"
 }
 
 # Проверка прав root
@@ -34,8 +34,41 @@ check_root() {
     fi
 }
 
+# Проверка операционной системы
+check_os() {
+    log "Проверка операционной системы..."
+    
+    if [ ! -f /etc/os-release ]; then
+        log "Ошибка: Файл /etc/os-release не найден"
+        exit 1
+    fi
+    
+    local os_id
+    local os_name
+    
+    os_id=$(grep -E "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    os_name=$(grep -E "^PRETTY_NAME=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    
+    case "$os_id" in
+        debian|ubuntu)
+            log "Обнаружена поддерживаемая ОС: $os_name"
+            ;;
+        *)
+            log "Ошибка: Операционная система $os_name не поддерживается"
+            log "Поддерживаются только Debian и Ubuntu"
+            exit 1
+            ;;
+    esac
+    
+    if [ "$(uname -m)" != "x86_64" ]; then
+        log "Ошибка: Поддерживается только архитектура x86_64"
+        exit 1
+    fi
+}
+
 # Проверка интернет-соединения
 check_internet() {
+    log "Проверка подключения к интернету..."
     if ! ping -c1 -W3 google.com &>/dev/null; then
         log "Ошибка: Нет подключения к интернету"
         exit 1
@@ -44,7 +77,7 @@ check_internet() {
 
 # Проверка свободного места
 check_disk_space() {
-    local required_space=2000  # 2GB в MB
+    local required_space=2000
     local available_space
     available_space=$(df --output=avail -m / | awk 'NR==2 {print $1}')
     
@@ -52,22 +85,6 @@ check_disk_space() {
         log "Ошибка: Недостаточно свободного места (минимум 2 ГБ)"
         exit 1
     fi
-}
-
-# Определение доступных версий ядра
-get_available_kernels() {
-    log "Получение списка доступных версий ядра..."
-    apt-get update -qq || { log "Ошибка при обновлении списка пакетов"; exit 1; }
-    
-    local kernels
-    kernels=$(apt-cache search linux-xanmod | grep '^linux-xanmod' | cut -d ' ' -f 1 | grep -v 'headers\|image')
-    
-    if [ -z "$kernels" ]; then
-        log "Ошибка: Не удалось получить список доступных версий"
-        exit 1
-    fi
-    
-    echo "$kernels"
 }
 
 # Определение PSABI версии
@@ -97,10 +114,9 @@ select_kernel_version() {
     echo "2) linux-xanmod-edge-${PSABI_VERSION} (Версия с новейшими функциями)"
     echo "3) linux-xanmod-rt-${PSABI_VERSION} (Версия с поддержкой реального времени)"
     echo "4) linux-xanmod-lts-${PSABI_VERSION} (Версия с долгосрочной поддержкой)"
-    echo "5) Показать все доступные версии"
     
     local choice
-    read -rp "Выберите версию ядра (1-5, по умолчанию 1): " choice
+    read -rp "Выберите версию ядра (1-4, по умолчанию 1): " choice
     
     local KERNEL_PACKAGE
     case $choice in
@@ -112,26 +128,6 @@ select_kernel_version() {
             ;;
         4)
             KERNEL_PACKAGE="linux-xanmod-lts-${PSABI_VERSION}"
-            ;;
-        5)
-            echo -e "\nВсе доступные версии:"
-            local all_versions
-            mapfile -t all_versions < <(get_available_kernels)
-            local i=1
-            for version in "${all_versions[@]}"; do
-                echo "$i) $version"
-                ((i++))
-            done
-            
-            local max=$((${#all_versions[@]}))
-            read -rp "Выберите версию (1-$max): " subchoice
-            
-            if [[ "$subchoice" =~ ^[0-9]+$ ]] && [ "$subchoice" -ge 1 ] && [ "$subchoice" -le $max ]; then
-                KERNEL_PACKAGE="${all_versions[$((subchoice-1))]}"
-            else
-                log "Неверный выбор. Используется стандартная версия."
-                KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
-            fi
             ;;
         *)
             KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
@@ -184,13 +180,11 @@ install_kernel() {
 configure_bbr() {
     log "Настройка TCP BBR..."
     
-    # Проверка текущего ядра на XanMod
     if ! uname -r | grep -q "xanmod"; then
         log "Ошибка: Не обнаружено ядро XanMod"
         exit 1
     fi
     
-    # Создаем конфигурационный файл для sysctl
     cat > "$SYSCTL_CONFIG" <<EOF
 # BBR
 net.ipv4.tcp_congestion_control = bbr3
@@ -213,29 +207,12 @@ net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_notsent_lowat = 131072
 EOF
 
-    # Применяем настройки
-    sysctl --system || { log "Ошибка применения настроек sysctl"; exit 1; }
+    sysctl --system || { 
+        log "Ошибка применения настроек sysctl"
+        exit 1
+    }
 
-    # Проверяем активацию BBR3
-    local current_cc
-    current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
-    local current_qdisc
-    current_qdisc=$(sysctl -n net.core.default_qdisc)
-
-    if [[ "$current_cc" != "bbr3" ]]; then
-        log "Ошибка: BBR3 не активирован! Текущий алгоритм: $current_cc"
-        return 1
-    fi
-
-    if [[ "$current_qdisc" != "fq_pie" ]]; then
-        log "Предупреждение: Планировщик очереди не fq_pie (текущий: $current_qdisc)"
-    fi
-
-    log "Настройка TCP BBR3 завершена успешно"
-    log "Текущий алгоритм: $current_cc"
-    log "Текущий планировщик очереди: $current_qdisc"
-    
-    return 0
+    check_bbr_version
 }
 
 # Проверка версии BBR
@@ -253,54 +230,14 @@ check_bbr_version() {
     log "Доступные алгоритмы: $available_cc"
     log "Текущий планировщик очереди: $current_qdisc"
     
-    case "$current_cc" in
-        "bbr3")
-            log "Используется BBR3"
-            ;;
-        "bbr2")
-            log "Используется BBR2"
-            ;;
-        "bbr")
-            log "Используется BBR1"
-            ;;
-        *)
-            log "BBR не используется. Текущий алгоритм: $current_cc"
-            ;;
-    esac
-}
-# Проверка операционной системы
-check_os() {
-    log "Проверка операционной системы..."
-    
-    if [ ! -f /etc/os-release ]; then
-        log "Ошибка: Файл /etc/os-release не найден"
+    if [[ "$current_cc" != "bbr3" ]]; then
+        log "Ошибка: BBR3 не активирован!"
         exit 1
     fi
-    
-    source /etc/os-release
-    
-    case "$ID" in
-        debian|ubuntu)
-            log "Обнаружена поддерживаемая ОС: $PRETTY_NAME"
-            ;;
-        *)
-            log "Ошибка: Операционная система $PRETTY_NAME не поддерживается"
-            log "Поддерживаются только Debian и Ubuntu"
-            exit 1
-            ;;
-    esac
-    
-    # Проверка архитектуры
-    if [ "$(uname -m)" != "x86_64" ]; then
-        log "Ошибка: Поддерживается только архитектура x86_64"
-        exit 1
+
+    if [[ "$current_qdisc" != "fq_pie" ]]; then
+        log "Предупреждение: Планировщик очереди не fq_pie"
     fi
-}
-# Очистка системы
-system_cleanup() {
-    log "Начало очистки системы..."
-    apt-get autoremove --purge -y || { log "Ошибка при выполнении apt-get autoremove --purge"; exit 1; }
-    log "Очистка системы завершена успешно"
 }
 
 # Создание сервиса автозапуска
@@ -321,39 +258,19 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-    cp "$0" "$SCRIPT_PATH" || {
-        log "Ошибка: Не удалось скопировать скрипт в $SCRIPT_PATH"
-        exit 1
-    }
-    
-    chmod +x "$SCRIPT_PATH" || {
-        log "Ошибка: Не удалось установить права на исполнение для $SCRIPT_PATH"
-        exit 1
-    }
-    
-    systemctl daemon-reload || {
-        log "Ошибка: Не удалось перезагрузить systemd"
-        exit 1
-    }
-    
-    systemctl enable "${SERVICE_NAME}.service" || {
-        log "Ошибка: Не удалось включить сервис ${SERVICE_NAME}"
-        exit 1
-    }
-    
-    log "Сервис автозапуска успешно создан"
+    cp "$0" "$SCRIPT_PATH"
+    chmod +x "$SCRIPT_PATH"
+    systemctl daemon-reload
+    systemctl enable "${SERVICE_NAME}.service"
 }
 
 # Удаление сервиса автозапуска
 remove_startup_service() {
     log "Удаление сервиса автозапуска..."
-    if systemctl is-enabled "${SERVICE_NAME}.service" &>/dev/null; then
-        systemctl disable "${SERVICE_NAME}.service"
-        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-        systemctl daemon-reload
-    fi
-    [ -f "$SCRIPT_PATH" ] && rm -f "$SCRIPT_PATH"
-    log "Сервис автозапуска удален"
+    systemctl disable "${SERVICE_NAME}.service"
+    rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+    systemctl daemon-reload
+    rm -f "$SCRIPT_PATH"
 }
 
 # Главная функция
@@ -364,29 +281,26 @@ main() {
         continue_installation=1
     fi
 
-    # Начальные проверки
-    check_root
-    check_internet
-    check_disk_space
-    check_os
-
-    if [[ -f "$STATE_FILE" ]]; then
-        case $(cat "$STATE_FILE") in
-            "kernel_installed")
-                log "Завершающий этап: Настройка BBR3"
-                configure_bbr
-                check_bbr_version
-                system_cleanup
-                rm -f "$STATE_FILE"
-                remove_startup_service
-                log "Установка успешно завершена!"
-                ;;
-        esac
+    if [ "$continue_installation" -eq 1 ]; then
+        if [ -f "$STATE_FILE" ]; then
+            configure_bbr
+            remove_startup_service
+            rm -f "$STATE_FILE"
+            log "Установка завершена успешно!"
+        else
+            log "Ошибка: файл состояния не найден"
+            exit 1
+        fi
     else
-        log "Начало установки..."
+        log "Запуск установки XanMod (Версия $SCRIPT_VERSION)"
+        check_root
+        check_os
+        check_internet
+        check_disk_space
         install_kernel
         create_startup_service
-        log "Перезагрузка системы..."
+        log "Установка завершена. Система будет перезагружена через 5 секунд..."
+        sleep 5
         reboot
     fi
 }
