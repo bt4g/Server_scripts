@@ -9,16 +9,7 @@ readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-
-# Получаем полный путь к текущему скрипту
-SCRIPT_SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SCRIPT_SOURCE" ]; do
-    SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_SOURCE" )" && pwd )"
-    SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
-    [[ $SCRIPT_SOURCE != /* ]] && SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE"
-done
-SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_SOURCE" )" && pwd )"
-SCRIPT_FULL_PATH="$SCRIPT_DIR/$(basename "$SCRIPT_SOURCE")"
+readonly TEMP_SCRIPT="/tmp/xanmod_install_temp.sh"
 
 # Функция логирования
 log() {
@@ -31,6 +22,7 @@ cleanup() {
     if [[ "${1:-}" != "reboot" ]]; then
         log "Скрипт прерван. Очистка временных файлов..."
         rm -f "$STATE_FILE"
+        rm -f "$TEMP_SCRIPT"
     fi
     exit 1
 }
@@ -38,13 +30,16 @@ trap 'cleanup' INT TERM EXIT
 
 # Создание сервиса автозапуска
 create_startup_service() {
-    # Проверяем существование исходного файла
-    if [ ! -f "$SCRIPT_FULL_PATH" ]; then
-        log "Ошибка: Не удается найти исходный файл скрипта: $SCRIPT_FULL_PATH"
-        exit 1
-    }
-
     log "Создание сервиса автозапуска..."
+    
+    # Определяем исходный скрипт
+    local source_script
+    if [ -f "$TEMP_SCRIPT" ]; then
+        source_script="$TEMP_SCRIPT"
+    else
+        source_script="$0"
+    fi
+
     cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=XanMod Kernel Installation Continuation
@@ -59,8 +54,8 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-    # Копируем скрипт в системную директорию с выводом ошибок
-    if ! cp "$SCRIPT_FULL_PATH" "$SCRIPT_PATH" 2>/dev/null; then
+    # Копируем скрипт в системную директорию
+    if ! cp "$source_script" "$SCRIPT_PATH" 2>/dev/null; then
         log "Ошибка: Не удалось скопировать скрипт в $SCRIPT_PATH"
         exit 1
     }
@@ -93,6 +88,7 @@ remove_startup_service() {
         systemctl daemon-reload
     fi
     [ -f "$SCRIPT_PATH" ] && rm -f "$SCRIPT_PATH"
+    [ -f "$TEMP_SCRIPT" ] && rm -f "$TEMP_SCRIPT"
     log "Сервис автозапуска удален"
 }
 
@@ -301,4 +297,11 @@ main() {
     fi
 }
 
-main "$@"
+# Если скрипт запущен через pipe, сначала сохраняем его
+if [ ! -t 0 ]; then
+    cat > "$TEMP_SCRIPT"
+    chmod +x "$TEMP_SCRIPT"
+    exec "$TEMP_SCRIPT" "$@"
+else
+    main "$@"
+fi
