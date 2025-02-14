@@ -285,11 +285,22 @@ main() {
     fi
 }
 
-# Запуск скрипта
+# Сохранение и запуск скрипта
 if [ ! -t 0 ]; then
-    cat > "$TEMP_SCRIPT"
+    # Если скрипт запущен через pipe
+    tee "$TEMP_SCRIPT" > /dev/null
+    if [ ! -f "$TEMP_SCRIPT" ]; then
+        echo "Ошибка: Не удалось создать временный файл"
+        exit 1
+    fi
     chmod +x "$TEMP_SCRIPT"
-    exec "$TEMP_SCRIPT" "$@"
+    if [ -x "$TEMP_SCRIPT" ]; then
+        exec "$TEMP_SCRIPT" "$@"
+    else
+        echo "Ошибка: Не удалось сделать временный файл исполняемым"
+        exit 1
+    fi
 else
+    # Прямой запуск скрипта
     main "$@"
 fi
