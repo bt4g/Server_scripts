@@ -2,8 +2,12 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-14 22:38:54 UTC
+# Created: 2025-02-14 22:49:18 UTC
+# Last Modified: 2025-02-14 22:49:18 UTC
+# Repository: https://github.com/gopnikgame/Server_scripts
 # Description: XanMod kernel installation script with BBR3 optimization
+# License: MIT
+# Usage: curl -o install_xanmod.sh -L https://git.io/JoVK9 && chmod +x install_xanmod.sh && sudo ./install_xanmod.sh
 
 set -euo pipefail
 exec > >(tee -a "/var/log/xanmod_install.log") 2>&1
