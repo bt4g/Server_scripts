@@ -1,20 +1,25 @@
 #!/bin/bash
 
+# Version: 1.0.0
+# Author: gopnikgame
+# Last Updated: 2025-02-14
+# Description: XanMod kernel installation script with BBR3 optimization
+
 set -euo pipefail
 exec > >(tee -a "/var/log/xanmod_install.log") 2>&1
 
 # Константы
 readonly STATE_FILE="/var/tmp/xanmod_install_state"
 readonly LOG_FILE="/var/log/xanmod_install.log"
-readonly SYSCTL_CONFIG="/etc/sysctl.d/99-bbr.conf"
+readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly TEMP_SCRIPT="/tmp/xanmod_install_temp.sh"
+readonly VERSION="1.0.0"
 
 # Функция логирования
 log() {
     local message="$1"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $message" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] - $message" | tee -a "$LOG_FILE"
 }
 
 # Проверка прав root
@@ -23,18 +28,6 @@ check_root() {
         log "Ошибка: Этот скрипт должен быть запущен с правами root"
         exit 1
     fi
-}
-
-# Проверка загруженного ядра
-check_kernel() {
-    local current_kernel=$(uname -r)
-    
-    if [[ "$current_kernel" != *"xanmod"* ]]; then
-        log "ВНИМАНИЕ: Система не загружена на ядре Xanmod. Текущее ядро: $current_kernel"
-        return 1
-    fi
-    log "Текущее ядро: $current_kernel - это ядро XanMod"
-    return 0
 }
 
 # Проверка интернет-соединения
@@ -62,11 +55,6 @@ check_os() {
         log "Ошибка: Этот скрипт поддерживает только Ubuntu и Debian"
         exit 1
     fi
-    if grep -q "Ubuntu" /etc/os-release; then
-        readonly DISTRO="ubuntu"
-    else
-        readonly DISTRO="debian"
-    fi
 }
 
 # Проверка архитектуры
@@ -77,30 +65,6 @@ check_architecture() {
     fi
 }
 
-# Проверка зависимостей
-check_dependencies() {
-    local deps=(awk grep apt-get software-properties-common curl gpg)
-    
-    for dep in "${deps[@]}"; do
-        if ! command -v "$dep" &> /dev/null; then
-            log "Установка недостающей зависимости: $dep"
-            apt-get install -y "$dep" || { log "Ошибка при установке $dep"; exit 1; }
-        fi
-    done
-}
-
-# Обработчик прерываний
-cleanup() {
-    if [[ "${1:-}" != "reboot" ]]; then
-        log "Скрипт прерван. Очистка временных файлов..."
-        rm -f "$STATE_FILE"
-        rm -f "$TEMP_SCRIPT"
-    fi
-    exit 1
-}
-
-trap cleanup INT TERM EXIT
-
 # Определение PSABI версии
 get_psabi_version() {
     local level=1
@@ -110,21 +74,6 @@ get_psabi_version() {
     elif [[ $flags =~ sse4_2 ]]; then level=2
     fi
     echo "x64v$level"
-}
-
-# Определение доступных версий ядра
-get_available_kernels() {
-    log "Получение списка доступных версий ядра..."
-    apt-get update -qq || { log "Ошибка при обновлении списка пакетов"; exit 1; }
-    
-    local versions=$(apt-cache search linux-xanmod | grep '^linux-xanmod' | cut -d ' ' -f 1 | grep -v 'headers\|image')
-    
-    if [ -z "$versions" ]; then
-        log "Ошибка: Не удалось получить список доступных версий"
-        exit 1
-    fi
-    
-    echo "$versions"
 }
 
 # Функция выбора версии ядра
@@ -181,60 +130,6 @@ select_kernel_version() {
     return 0
 }
 
-# Создание сервиса автозапуска
-create_startup_service() {
-    log "Создание сервиса автозапуска..."
-    
-    cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
-[Unit]
-Description=XanMod Kernel Installation Continuation
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=$SCRIPT_PATH --continue
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    cp "$0" "$SCRIPT_PATH" 2>/dev/null || {
-        log "Ошибка: Не удалось скопировать скрипт в $SCRIPT_PATH"
-        exit 1
-    }
-    
-    chmod +x "$SCRIPT_PATH" || {
-        log "Ошибка: Не удалось установить права на исполнение для $SCRIPT_PATH"
-        exit 1
-    }
-    
-    systemctl daemon-reload || {
-        log "Ошибка: Не удалось перезагрузить systemd"
-        exit 1
-    }
-    
-    systemctl enable "${SERVICE_NAME}.service" || {
-        log "Ошибка: Не удалось включить сервис ${SERVICE_NAME}"
-        exit 1
-    }
-    
-    log "Сервис автозапуска успешно создан"
-}
-
-# Удаление сервиса автозапуска
-remove_startup_service() {
-    log "Удаление сервиса автозапуска..."
-    if systemctl is-enabled "${SERVICE_NAME}.service" &>/dev/null; then
-        systemctl disable "${SERVICE_NAME}.service"
-        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-        systemctl daemon-reload
-    fi
-    [ -f "$SCRIPT_PATH" ] && rm -f "$SCRIPT_PATH"
-    [ -f "$TEMP_SCRIPT" ] && rm -f "$TEMP_SCRIPT"
-    log "Сервис автозапуска удален"
-}
-
 # Установка ядра
 install_kernel() {
     log "Начало установки ядра Xanmod..."
@@ -273,35 +168,148 @@ install_kernel() {
     log "Ядро успешно установлено. Требуется перезагрузка."
 }
 
-# Обновление системы
-system_update() {
-    log "Начало обновления системы..."
-    apt-get update || { log "Ошибка при выполнении apt-get update"; exit 1; }
-    apt-get autoclean -y || { log "Ошибка при выполнении apt-get autoclean"; exit 1; }
-    apt-get autoremove -y || { log "Ошибка при выполнении apt-get autoremove"; exit 1; }
-    log "Обновление системы завершено успешно"
-}
-
-# Настройка BBR
+# Настройка BBR v3
 configure_bbr() {
     log "Настройка TCP BBR..."
-    echo "net.core.default_qdisc=fq" > "$SYSCTL_CONFIG"
-    echo "net.ipv4.tcp_congestion_control=bbr" >> "$SYSCTL_CONFIG"
-    sysctl --system || { log "Ошибка применения настроек"; exit 1; }
-
-    if [[ $(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}') != "bbr" ]]; then
-        log "Ошибка: BBR не активирован!"
+    
+    # Проверка текущего ядра на XanMod
+    if ! uname -r | grep -q "xanmod"; then
+        log "Ошибка: Не обнаружено ядро XanMod"
         exit 1
+    }
+    
+    # Создаем конфигурационный файл для sysctl
+    cat > "$SYSCTL_CONFIG" <<EOF
+# BBR
+net.ipv4.tcp_congestion_control = bbr3
+net.core.default_qdisc = fq_pie
+net.ipv4.tcp_ecn = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_low_latency = 1
+
+# Оптимизация сетевого стека
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.core.rmem_default = 1048576
+net.core.wmem_default = 1048576
+net.core.optmem_max = 65536
+net.ipv4.tcp_rmem = 4096 1048576 67108864
+net.ipv4.tcp_wmem = 4096 1048576 67108864
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_notsent_lowat = 131072
+EOF
+
+    # Применяем настройки
+    sysctl --system || { log "Ошибка применения настроек sysctl"; exit 1; }
+
+    # Проверяем активацию BBR3
+    local current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
+    local current_qdisc=$(sysctl -n net.core.default_qdisc)
+
+    if [[ "$current_cc" != "bbr3" ]]; then
+        log "Ошибка: BBR3 не активирован! Текущий алгоритм: $current_cc"
+        return 1
     fi
-    log "Настройка BBR завершена успешно"
+
+    if [[ "$current_qdisc" != "fq_pie" ]]; then
+        log "Предупреждение: Планировщик очереди не fq_pie (текущий: $current_qdisc)"
+    fi
+
+    log "Настройка TCP BBR3 завершена успешно"
+    log "Текущий алгоритм: $current_cc"
+    log "Текущий планировщик очереди: $current_qdisc"
+    
+    return 0
+}
+
+# Проверка версии BBR
+check_bbr_version() {
+    log "Проверка версии BBR..."
+    
+    local current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
+    local available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control)
+    local current_qdisc=$(sysctl -n net.core.default_qdisc)
+    
+    log "Текущий алгоритм управления перегрузкой: $current_cc"
+    log "Доступные алгоритмы: $available_cc"
+    log "Текущий планировщик очереди: $current_qdisc"
+    
+    case "$current_cc" in
+        "bbr3")
+            log "Используется BBR3"
+            ;;
+        "bbr2")
+            log "Используется BBR2"
+            ;;
+        "bbr")
+            log "Используется BBR1"
+            ;;
+        *)
+            log "BBR не используется. Текущий алгоритм: $current_cc"
+            ;;
+    esac
 }
 
 # Очистка системы
 system_cleanup() {
     log "Начало очистки системы..."
     apt-get autoremove --purge -y || { log "Ошибка при выполнении apt-get autoremove --purge"; exit 1; }
-    remove_startup_service
     log "Очистка системы завершена успешно"
+}
+
+# Создание сервиса автозапуска
+create_startup_service() {
+    log "Создание сервиса автозапуска..."
+    
+    cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=XanMod Kernel Installation Continuation
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=$SCRIPT_PATH --continue
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    cp "$0" "$SCRIPT_PATH" || {
+        log "Ошибка: Не удалось скопировать скрипт в $SCRIPT_PATH"
+        exit 1
+    }
+    
+    chmod +x "$SCRIPT_PATH" || {
+        log "Ошибка: Не удалось установить права на исполнение для $SCRIPT_PATH"
+        exit 1
+    }
+    
+    systemctl daemon-reload || {
+        log "Ошибка: Не удалось перезагрузить systemd"
+        exit 1
+    }
+    
+    systemctl enable "${SERVICE_NAME}.service" || {
+        log "Ошибка: Не удалось включить сервис ${SERVICE_NAME}"
+        exit 1
+    }
+    
+    log "Сервис автозапуска успешно создан"
+}
+
+# Удаление сервиса автозапуска
+remove_startup_service() {
+    log "Удаление сервиса автозапуска..."
+    if systemctl is-enabled "${SERVICE_NAME}.service" &>/dev/null; then
+        systemctl disable "${SERVICE_NAME}.service"
+        rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+        systemctl daemon-reload
+    fi
+    [ -f "$SCRIPT_PATH" ] && rm -f "$SCRIPT_PATH"
+    log "Сервис автозапуска удален"
 }
 
 # Главная функция
@@ -312,64 +320,33 @@ main() {
         continue_installation=1
     fi
 
+    # Начальные проверки
     check_root
     check_internet
     check_disk_space
     check_os
     check_architecture
-    check_dependencies
 
     if [[ -f "$STATE_FILE" ]]; then
         case $(cat "$STATE_FILE") in
-            "update_complete")
-                log "Продолжение после обновления системы..."
-                check_kernel || true
-                install_kernel
-                create_startup_service
-                trap 'cleanup reboot' EXIT
-                log "Перезагрузка системы..."
-                reboot
-                ;;
             "kernel_installed")
-                log "Завершающий этап: Настройка BBR"
-                if check_kernel; then
-                    configure_bbr
-                    system_cleanup
-                    rm -f "$STATE_FILE"
-                    log "Установка успешно завершена!"
-                else
-                    log "Ошибка: Система не загружена на ядре XanMod"
-                    exit 1
-                fi
+                log "Завершающий этап: Настройка BBR3"
+                configure_bbr
+                check_bbr_version
+                system_cleanup
+                rm -f "$STATE_FILE"
+                remove_startup_service
+                log "Установка успешно завершена!"
                 ;;
         esac
-    elif [[ $continue_installation -eq 0 ]]; then
+    else
         log "Начало установки..."
-        system_update
-        echo "update_complete" > "$STATE_FILE"
+        install_kernel
         create_startup_service
-        trap 'cleanup reboot' EXIT
         log "Перезагрузка системы..."
         reboot
     fi
 }
 
 # Запуск скрипта
-if [ ! -t 0 ]; then
-    # Если скрипт запущен через pipe
-    tee "$TEMP_SCRIPT" > /dev/null
-    if [ ! -f "$TEMP_SCRIPT" ]; then
-        echo "Ошибка: Не удалось создать временный файл"
-        exit 1
-    fi
-    chmod +x "$TEMP_SCRIPT"
-    if [ -x "$TEMP_SCRIPT" ]; then
-        exec "$TEMP_SCRIPT" "$@"
-    else
-        echo "Ошибка: Не удалось сделать временный файл исполняемым"
-        exit 1
-    fi
-else
-    # Прямой запуск скрипта
-    main "$@"
-fi
+main "$@"
