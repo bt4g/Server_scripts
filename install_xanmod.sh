@@ -268,7 +268,34 @@ check_bbr_version() {
             ;;
     esac
 }
-
+# Проверка операционной системы
+check_os() {
+    log "Проверка операционной системы..."
+    
+    if [ ! -f /etc/os-release ]; then
+        log "Ошибка: Файл /etc/os-release не найден"
+        exit 1
+    fi
+    
+    source /etc/os-release
+    
+    case "$ID" in
+        debian|ubuntu)
+            log "Обнаружена поддерживаемая ОС: $PRETTY_NAME"
+            ;;
+        *)
+            log "Ошибка: Операционная система $PRETTY_NAME не поддерживается"
+            log "Поддерживаются только Debian и Ubuntu"
+            exit 1
+            ;;
+    esac
+    
+    # Проверка архитектуры
+    if [ "$(uname -m)" != "x86_64" ]; then
+        log "Ошибка: Поддерживается только архитектура x86_64"
+        exit 1
+    fi
+}
 # Очистка системы
 system_cleanup() {
     log "Начало очистки системы..."
