@@ -2,7 +2,8 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-14 23:10:53 UTC
+# Created: 2025-02-15 04:21:59 UTC
+# Last Modified: 2025-02-15 04:21:59 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -23,23 +24,33 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Функция логирования
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] - $1"
+    echo -e "\033[1;34m[$(date '+%Y-%m-%d %H:%M:%S')]\033[0m - $1"
+}
+
+# Функция вывода заголовка
+print_header() {
+    echo -e "\n\033[1;32m=== $1 ===\033[0m\n"
+}
+
+# Функция вывода ошибки
+log_error() {
+    echo -e "\033[1;31m[ОШИБКА] - $1\033[0m"
 }
 
 # Проверка прав root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        log "Ошибка: Этот скрипт должен быть запущен с правами root"
+        log_error "Этот скрипт должен быть запущен с правами root"
         exit 1
     fi
 }
 
 # Проверка операционной системы
 check_os() {
-    log "Проверка операционной системы..."
+    print_header "Проверка системы"
     
     if [ ! -f /etc/os-release ]; then
-        log "Ошибка: Файл /etc/os-release не найден"
+        log_error "Файл /etc/os-release не найден"
         exit 1
     fi
     
@@ -51,28 +62,31 @@ check_os() {
     
     case "$os_id" in
         debian|ubuntu)
-            log "Обнаружена поддерживаемая ОС: $os_name"
+            log "✓ Обнаружена поддерживаемая ОС: $os_name"
             ;;
         *)
-            log "Ошибка: Операционная система $os_name не поддерживается"
-            log "Поддерживаются только Debian и Ubuntu"
+            log_error "Операционная система $os_name не поддерживается"
+            log_error "Поддерживаются только Debian и Ubuntu"
             exit 1
             ;;
     esac
     
     if [ "$(uname -m)" != "x86_64" ]; then
-        log "Ошибка: Поддерживается только архитектура x86_64"
+        log_error "Поддерживается только архитектура x86_64"
         exit 1
     fi
+    
+    log "✓ Архитектура системы: $(uname -m)"
 }
 
 # Проверка интернет-соединения
 check_internet() {
     log "Проверка подключения к интернету..."
     if ! ping -c1 -W3 google.com &>/dev/null; then
-        log "Ошибка: Нет подключения к интернету"
+        log_error "Нет подключения к интернету"
         exit 1
     fi
+    log "✓ Подключение к интернету активно"
 }
 
 # Проверка свободного места
@@ -81,10 +95,12 @@ check_disk_space() {
     local available_space
     available_space=$(df --output=avail -m / | awk 'NR==2 {print $1}')
     
+    log "Проверка свободного места..."
     if (( available_space < required_space )); then
-        log "Ошибка: Недостаточно свободного места (минимум 2 ГБ)"
+        log_error "Недостаточно свободного места (минимум 2 ГБ)"
         exit 1
     fi
+    log "✓ Доступно $(( available_space / 1024 )) ГБ свободного места"
 }
 
 # Определение PSABI версии
@@ -104,20 +120,22 @@ get_psabi_version() {
 
 # Функция выбора версии ядра
 select_kernel_version() {
-    log "Выбор версии ядра XanMod"
+    print_header "Выбор версии ядра XanMod"
     local PSABI_VERSION
     PSABI_VERSION=$(get_psabi_version)
-    log "Рекомендуемая PSABI версия для вашего процессора: ${PSABI_VERSION}"
+    log "Рекомендуемая оптимизация для вашего CPU: ${PSABI_VERSION}"
     
-    echo -e "\nДоступные версии ядра XanMod:"
-    echo "1) linux-xanmod-${PSABI_VERSION} (Стабильная версия)"
-    echo "2) linux-xanmod-edge-${PSABI_VERSION} (Версия с новейшими функциями)"
-    echo "3) linux-xanmod-rt-${PSABI_VERSION} (Версия с поддержкой реального времени)"
-    echo "4) linux-xanmod-lts-${PSABI_VERSION} (Версия с долгосрочной поддержкой)"
+    echo -e "\n\033[1;33mДоступные версии ядра:\033[0m"
+    echo "----------------------------------------"
+    echo -e "\033[1;36m1)\033[0m linux-xanmod         - Стабильная версия (рекомендуется)"
+    echo -e "\033[1;36m2)\033[0m linux-xanmod-edge    - Версия с новейшими функциями"
+    echo -e "\033[1;36m3)\033[0m linux-xanmod-rt      - Версия с поддержкой реального времени"
+    echo -e "\033[1;36m4)\033[0m linux-xanmod-lts     - Версия с долгосрочной поддержкой"
+    echo "----------------------------------------"
+    echo -e "Все версии будут установлены с оптимизацией \033[1;32m${PSABI_VERSION}\033[0m\n"
     
     local choice
-    read -rp "Выберите версию ядра (1-4, по умолчанию 1): " choice
-    
+    read -rp $'\033[1;33mВаш выбор (1-4, по умолчанию 1): \033[0m' choice
     local KERNEL_PACKAGE
     case $choice in
         2)
@@ -134,59 +152,64 @@ select_kernel_version() {
             ;;
     esac
     
+    echo -e "\n\033[1;32mВыбрана версия:\033[0m $KERNEL_PACKAGE"
+    echo "----------------------------------------"
+    
     echo "$KERNEL_PACKAGE"
 }
 
 # Установка ядра
 install_kernel() {
-    log "Начало установки ядра Xanmod..."
+    print_header "Установка ядра XanMod"
     
     if [ ! -f "/etc/apt/trusted.gpg.d/xanmod-kernel.gpg" ]; then
-        log "Добавление ключа и репозитория XanMod..."
+        log "Добавление репозитория XanMod..."
         curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg || {
-            log "Ошибка при добавлении ключа"
+            log_error "Ошибка при добавлении ключа"
             exit 1
         }
         echo 'deb [signed-by=/etc/apt/trusted.gpg.d/xanmod-kernel.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-kernel.list || {
-            log "Ошибка при добавлении репозитория"
+            log_error "Ошибка при добавлении репозитория"
             exit 1
         }
-        apt-get update || {
-            log "Ошибка при обновлении пакетов"
+        apt-get update -qq || {
+            log_error "Ошибка при обновлении пакетов"
             exit 1
         }
+        log "✓ Репозиторий XanMod успешно добавлен"
     fi
 
     local KERNEL_PACKAGE
     KERNEL_PACKAGE=$(select_kernel_version)
 
-    log "Установка пакета: $KERNEL_PACKAGE"
+    echo -e "\n\033[1;33mУстановка пакета: $KERNEL_PACKAGE\033[0m"
     apt-get install -y "$KERNEL_PACKAGE" || {
-        log "Ошибка при установке ядра"
+        log_error "Ошибка при установке ядра"
         exit 1
     }
 
     log "Обновление конфигурации GRUB..."
     update-grub || {
-        log "Ошибка при обновлении GRUB"
+        log_error "Ошибка при обновлении GRUB"
         exit 1
     }
 
     echo "kernel_installed" > "$STATE_FILE"
-    log "Ядро успешно установлено. Требуется перезагрузка."
+    log "✓ Ядро успешно установлено"
 }
 
 # Настройка BBR
 configure_bbr() {
-    log "Настройка TCP BBR..."
+    print_header "Настройка TCP BBR3"
     
     if ! uname -r | grep -q "xanmod"; then
-        log "Ошибка: Не обнаружено ядро XanMod"
+        log_error "Не обнаружено ядро XanMod"
         exit 1
     fi
     
+    log "Применение оптимизированных сетевых настроек..."
     cat > "$SYSCTL_CONFIG" <<EOF
-# BBR
+# BBR настройки
 net.ipv4.tcp_congestion_control = bbr3
 net.core.default_qdisc = fq_pie
 net.ipv4.tcp_ecn = 1
@@ -207,17 +230,18 @@ net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_notsent_lowat = 131072
 EOF
 
-    sysctl --system || { 
-        log "Ошибка применения настроек sysctl"
+    sysctl --system >/dev/null 2>&1 || { 
+        log_error "Ошибка применения настроек sysctl"
         exit 1
     }
+    log "✓ Сетевые настройки применены"
 
     check_bbr_version
 }
 
 # Проверка версии BBR
 check_bbr_version() {
-    log "Проверка версии BBR..."
+    log "Проверка конфигурации BBR..."
     
     local current_cc
     current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
@@ -226,17 +250,22 @@ check_bbr_version() {
     local current_qdisc
     current_qdisc=$(sysctl -n net.core.default_qdisc)
     
-    log "Текущий алгоритм управления перегрузкой: $current_cc"
-    log "Доступные алгоритмы: $available_cc"
-    log "Текущий планировщик очереди: $current_qdisc"
+    echo -e "\n\033[1;33mТекущая конфигурация:\033[0m"
+    echo "----------------------------------------"
+    echo -e "Алгоритм управления:    \033[1;32m$current_cc\033[0m"
+    echo -e "Доступные алгоритмы:    \033[1;36m$available_cc\033[0m"
+    echo -e "Планировщик очереди:    \033[1;32m$current_qdisc\033[0m"
+    echo "----------------------------------------"
     
     if [[ "$current_cc" != "bbr3" ]]; then
-        log "Ошибка: BBR3 не активирован!"
+        log_error "BBR3 не активирован!"
         exit 1
     fi
 
     if [[ "$current_qdisc" != "fq_pie" ]]; then
-        log "Предупреждение: Планировщик очереди не fq_pie"
+        log "⚠️  Предупреждение: Планировщик очереди отличается от рекомендуемого (fq_pie)"
+    else
+        log "✓ Конфигурация BBR3 активна"
     fi
 }
 
@@ -262,15 +291,17 @@ EOF
     chmod +x "$SCRIPT_PATH"
     systemctl daemon-reload
     systemctl enable "${SERVICE_NAME}.service"
+    log "✓ Сервис автозапуска создан"
 }
 
 # Удаление сервиса автозапуска
 remove_startup_service() {
-    log "Удаление сервиса автозапуска..."
+    log "Очистка системы..."
     systemctl disable "${SERVICE_NAME}.service"
     rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
     systemctl daemon-reload
     rm -f "$SCRIPT_PATH"
+    log "✓ Временные файлы удалены"
 }
 
 # Главная функция
@@ -286,20 +317,23 @@ main() {
             configure_bbr
             remove_startup_service
             rm -f "$STATE_FILE"
-            log "Установка завершена успешно!"
+            print_header "Установка успешно завершена!"
+            echo -e "\nДля проверки работы BBR3 используйте команды:"
+            echo -e "\033[1;36msysctl net.ipv4.tcp_congestion_control\033[0m"
+            echo -e "\033[1;36msysctl net.core.default_qdisc\033[0m\n"
         else
-            log "Ошибка: файл состояния не найден"
+            log_error "Файл состояния не найден"
             exit 1
         fi
     else
-        log "Запуск установки XanMod (Версия $SCRIPT_VERSION)"
+        print_header "Установка XanMod Kernel v$SCRIPT_VERSION"
         check_root
         check_os
         check_internet
         check_disk_space
         install_kernel
         create_startup_service
-        log "Установка завершена. Система будет перезагружена через 5 секунд..."
+        echo -e "\n\033[1;33mУстановка завершена. Система будет перезагружена через 5 секунд...\033[0m"
         sleep 5
         reboot
     fi
