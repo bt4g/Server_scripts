@@ -2,8 +2,8 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-15 06:30:03 UTC
-# Last Modified: 2025-02-15 06:30:03 UTC
+# Created: 2025-02-15 06:59:54 UTC
+# Last Modified: 2025-02-15 06:59:54 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -18,7 +18,7 @@ readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly CURRENT_DATE="2025-02-15 06:30:03"
+readonly CURRENT_DATE="2025-02-15 06:59:54"
 readonly CURRENT_USER="gopnikgame"
 
 # Функция логирования
@@ -166,7 +166,7 @@ select_kernel_version() {
         
         echo -e "\n\033[1;33mℹ️  Информация о системе:\033[0m"
         echo "----------------------------------------"
-        echo -e "Текущая дата:      \033[1;36m2025-02-15 06:31:16\033[0m"
+        echo -e "Текущая дата:      \033[1;36m2025-02-15 07:04:03\033[0m"
         echo -e "Пользователь:      \033[1;36mgopnikgame\033[0m"
         echo -e "Текущее ядро:      \033[1;36m$(uname -r)\033[0m"
         echo -e "Оптимизация CPU:    \033[1;32m${PSABI_VERSION}\033[0m"
@@ -178,21 +178,6 @@ select_kernel_version() {
         echo -e "\033[1;36m2)\033[0m linux-xanmod-edge    \033[1;33m(Тестовая)\033[0m"
         echo -e "\033[1;36m3)\033[0m linux-xanmod-rt      \033[1;35m(RT)\033[0m"
         echo -e "\033[1;36m4)\033[0m linux-xanmod-lts     \033[1;34m(LTS)\033[0m"
-        echo "----------------------------------------"
-        
-        echo -e "\n\033[1;33m💡 Описание версий:\033[0m"
-        echo -e "\033[1;32m1) Стабильная\033[0m      - Оптимальный баланс производительности и стабильности"
-        echo -e "\033[1;33m2) Edge\033[0m            - Новейшие функции и обновления (может быть нестабильной)"
-        echo -e "\033[1;35m3) RT\033[0m              - Оптимизирована для задач реального времени"
-        echo -e "\033[1;34m4) LTS\033[0m             - Версия с долгосрочной поддержкой"
-        
-        echo -e "\n\033[1;33m🔧 Рекомендации по выбору:\033[0m"
-        echo -e "• Для домашних ПК и серверов   → \033[1;32mСтабильная (1)\033[0m"
-        echo -e "• Для энтузиастов              → \033[1;33mEdge (2)\033[0m"
-        echo -e "• Для аудио/видео обработки    → \033[1;35mRT (3)\033[0m"
-        echo -e "• Для рабочих станций          → \033[1;34mLTS (4)\033[0m"
-        
-        echo -e "\n\033[1;32mℹ️  Все версии будут установлены с оптимизацией ${PSABI_VERSION}\033[0m"
         echo "----------------------------------------"
     } > /dev/tty
 
@@ -210,11 +195,6 @@ select_kernel_version() {
         KERNEL_PACKAGE="${KERNEL_PACKAGE}-${PSABI_VERSION}"
     fi
 
-    {
-        echo -e "\n\033[1;32mВыбрана версия:\033[0m ${KERNEL_PACKAGE}"
-        echo "----------------------------------------"
-    } > /dev/tty
-
     printf "%s" "$KERNEL_PACKAGE"
 }
 
@@ -222,7 +202,6 @@ select_kernel_version() {
 install_kernel() {
     print_header "Установка ядра XanMod"
     
-    # Проверка и создание директорий
     mkdir -p /etc/apt/trusted.gpg.d
     mkdir -p /etc/apt/sources.list.d
     
@@ -246,7 +225,7 @@ install_kernel() {
     fi
 
     local KERNEL_PACKAGE
-    KERNEL_PACKAGE=$(select_kernel_version | tr -d '\n\r' | tr -d '[:space:]')
+    KERNEL_PACKAGE=$(select_kernel_version)
 
     if [ -z "$KERNEL_PACKAGE" ]; then
         log_error "Ошибка: имя пакета пустое"
@@ -256,11 +235,12 @@ install_kernel() {
     echo -e "\n\033[1;33mУстановка пакета: ${KERNEL_PACKAGE}\033[0m"
     apt-get update -qq
 
-    if ! apt-cache show "$KERNEL_PACKAGE" >/dev/null 2>&1; then
-        log_error "Пакет $KERNEL_PACKAGE не найден в репозитории"
-        echo -e "\nДоступные пакеты XanMod:"
-        apt-cache search linux-xanmod
-        exit 1
+    # Настройка параметров загрузки для BBR3
+    log "Настройка параметров загрузки ядра..."
+    if ! grep -q "tcp_congestion_control=bbr3" /etc/default/grub; then
+        cp /etc/default/grub /etc/default/grub.backup
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="tcp_congestion_control=bbr3 /' /etc/default/grub
+        log "✓ Параметры загрузки обновлены"
     fi
 
     # Установка с явным указанием конфигурации GRUB
@@ -284,72 +264,18 @@ install_kernel() {
 configure_bbr() {
     print_header "Настройка TCP BBR3"
     
-    # Проверка наличия ядра XanMod
     if ! uname -r | grep -q "xanmod"; then
         log_error "Не обнаружено ядро XanMod"
         exit 1
     fi
     
-    # Проверка доступности модуля bbr3
-    if ! grep -q "bbr3" /proc/sys/net/ipv4/tcp_available_congestion_control; then
-        log_error "Модуль BBR3 недоступен. Проверьте загрузку модулей ядра."
-        echo -e "\nДоступные алгоритмы:"
-        cat /proc/sys/net/ipv4/tcp_available_congestion_control
-        exit 1
-    fi
-    
     log "Применение оптимизированных сетевых настроек..."
     
-    # Создание временного файла конфигурации
     local temp_config
     temp_config=$(mktemp)
     
-    # Предварительная проверка доступных алгоритмов
-    echo "Доступные алгоритмы управления перегрузкой:"
-    sysctl net.ipv4.tcp_available_congestion_control
-    
-    # Базовые настройки BBR (пробуем сначала базовый BBR)
     cat > "$temp_config" <<EOF
-# BBR настройки
-net.ipv4.tcp_congestion_control=bbr
-net.core.default_qdisc=fq
-EOF
-
-    # Проверка базовых настроек
-    if ! sysctl -p "$temp_config" &>/dev/null; then
-        log_error "Ошибка в базовых настройках BBR. Пробуем альтернативную конфигурацию..."
-        
-        # Пробуем альтернативную конфигурацию
-        cat > "$temp_config" <<EOF
-# BBR настройки (альтернативные)
-net.ipv4.tcp_congestion_control=cubic
-net.core.default_qdisc=fq
-EOF
-        
-        if ! sysctl -p "$temp_config" &>/dev/null; then
-            log_error "Ошибка в альтернативных настройках. Проверьте права доступа и модули ядра."
-            rm -f "$temp_config"
-            exit 1
-        fi
-    fi
-
-    # Если базовая конфигурация работает, пробуем переключиться на BBR3
-    cat > "$temp_config" <<EOF
-# BBR3 настройки
-net.ipv4.tcp_congestion_control=bbr3
-net.core.default_qdisc=fq_pie
-EOF
-
-    if ! sysctl -p "$temp_config" &>/dev/null; then
-        log_error "Не удалось активировать BBR3. Возможно, модуль не загружен."
-        rm -f "$temp_config"
-        exit 1
-    fi
-
-    # Добавляем остальные настройки
-    cat > "$temp_config" <<EOF
-# BBR3 настройки
-net.ipv4.tcp_congestion_control=bbr3
+# Основные настройки
 net.core.default_qdisc=fq_pie
 
 # TCP настройки
@@ -373,57 +299,40 @@ net.ipv4.tcp_window_scaling=1
 net.ipv4.tcp_notsent_lowat=131072
 EOF
 
-    # Копирование проверенной конфигурации
+    if ! sysctl -p "$temp_config" &>"$LOG_FILE"; then
+        log_error "Ошибка применения настроек sysctl. Подробности:"
+        cat "$LOG_FILE"
+        rm -f "$temp_config"
+        exit 1
+    fi
+
     if ! cp "$temp_config" "$SYSCTL_CONFIG"; then
         log_error "Ошибка при копировании конфигурации"
         rm -f "$temp_config"
         exit 1
     fi
 
-    # Удаление временного файла
     rm -f "$temp_config"
-
-    # Применение настроек с подробным выводом ошибок
-    if ! sysctl --system &>"$LOG_FILE"; then
-        log_error "Ошибка применения настроек sysctl. Подробности:"
-        cat "$LOG_FILE"
-        exit 1
-    fi
-
     log "✓ Сетевые настройки применены"
+    
+    echo -e "\n\033[1;33mВажно: BBR3 будет активирован после перезагрузки\033[0m"
     check_bbr_version
 }
 
 # Проверка версии BBR
 check_bbr_version() {
-    log "Проверка конфигурации BBR..."
+    log "Проверка конфигурации сети..."
     
     local current_cc
     current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
-    local available_cc
-    available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "unknown")
     local current_qdisc
     current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "unknown")
     
     echo -e "\n\033[1;33mТекущая конфигурация:\033[0m"
     echo "----------------------------------------"
     echo -e "Алгоритм управления:    \033[1;32m$current_cc\033[0m"
-    echo -e "Доступные алгоритмы:    \033[1;36m$available_cc\033[0m"
     echo -e "Планировщик очереди:    \033[1;32m$current_qdisc\033[0m"
     echo "----------------------------------------"
-    
-    if [[ "$current_cc" != "bbr3" ]]; then
-        log_error "BBR3 не активирован!"
-        return 1
-    fi
-
-    if [[ "$current_qdisc" != "fq_pie" ]]; then
-        log "⚠️  Предупреждение: Планировщик очереди отличается от рекомендуемого (fq_pie)"
-    else
-        log "✓ Конфигурация BBR3 активна"
-    fi
-
-    return 0
 }
 
 # Создание сервиса автозапуска
