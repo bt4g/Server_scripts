@@ -290,45 +290,73 @@ configure_bbr() {
         exit 1
     fi
     
+    # Проверка доступности модуля bbr3
+    if ! grep -q "bbr3" /proc/sys/net/ipv4/tcp_available_congestion_control; then
+        log_error "Модуль BBR3 недоступен. Проверьте загрузку модулей ядра."
+        echo -e "\nДоступные алгоритмы:"
+        cat /proc/sys/net/ipv4/tcp_available_congestion_control
+        exit 1
+    fi
+    
     log "Применение оптимизированных сетевых настроек..."
     
     # Создание временного файла конфигурации
     local temp_config
     temp_config=$(mktemp)
     
-    # Базовые настройки BBR
+    # Предварительная проверка доступных алгоритмов
+    echo "Доступные алгоритмы управления перегрузкой:"
+    sysctl net.ipv4.tcp_available_congestion_control
+    
+    # Базовые настройки BBR (пробуем сначала базовый BBR)
     cat > "$temp_config" <<EOF
 # BBR настройки
-net.ipv4.tcp_congestion_control=bbr3
-net.core.default_qdisc=fq_pie
+net.ipv4.tcp_congestion_control=bbr
+net.core.default_qdisc=fq
 EOF
 
     # Проверка базовых настроек
     if ! sysctl -p "$temp_config" &>/dev/null; then
-        log_error "Ошибка в базовых настройках BBR"
+        log_error "Ошибка в базовых настройках BBR. Пробуем альтернативную конфигурацию..."
+        
+        # Пробуем альтернативную конфигурацию
+        cat > "$temp_config" <<EOF
+# BBR настройки (альтернативные)
+net.ipv4.tcp_congestion_control=cubic
+net.core.default_qdisc=fq
+EOF
+        
+        if ! sysctl -p "$temp_config" &>/dev/null; then
+            log_error "Ошибка в альтернативных настройках. Проверьте права доступа и модули ядра."
+            rm -f "$temp_config"
+            exit 1
+        fi
+    fi
+
+    # Если базовая конфигурация работает, пробуем переключиться на BBR3
+    cat > "$temp_config" <<EOF
+# BBR3 настройки
+net.ipv4.tcp_congestion_control=bbr3
+net.core.default_qdisc=fq_pie
+EOF
+
+    if ! sysctl -p "$temp_config" &>/dev/null; then
+        log_error "Не удалось активировать BBR3. Возможно, модуль не загружен."
         rm -f "$temp_config"
         exit 1
     fi
 
-    # Дополнительные TCP настройки
-    cat >> "$temp_config" <<EOF
+    # Добавляем остальные настройки
+    cat > "$temp_config" <<EOF
+# BBR3 настройки
+net.ipv4.tcp_congestion_control=bbr3
+net.core.default_qdisc=fq_pie
 
 # TCP настройки
 net.ipv4.tcp_ecn=1
 net.ipv4.tcp_timestamps=1
 net.ipv4.tcp_sack=1
 net.ipv4.tcp_low_latency=1
-EOF
-
-    # Проверка TCP настроек
-    if ! sysctl -p "$temp_config" &>/dev/null; then
-        log_error "Ошибка в TCP настройках"
-        rm -f "$temp_config"
-        exit 1
-    fi
-
-    # Настройки буферов
-    cat >> "$temp_config" <<EOF
 
 # Настройки буферов
 net.core.rmem_max=67108864
@@ -338,30 +366,12 @@ net.core.wmem_default=1048576
 net.core.optmem_max=65536
 net.ipv4.tcp_rmem=4096 1048576 67108864
 net.ipv4.tcp_wmem=4096 1048576 67108864
-EOF
-
-    # Проверка настроек буферов
-    if ! sysctl -p "$temp_config" &>/dev/null; then
-        log_error "Ошибка в настройках буферов"
-        rm -f "$temp_config"
-        exit 1
-    fi
-
-    # Дополнительные оптимизации
-    cat >> "$temp_config" <<EOF
 
 # Дополнительные оптимизации
 net.ipv4.tcp_fastopen=3
 net.ipv4.tcp_window_scaling=1
 net.ipv4.tcp_notsent_lowat=131072
 EOF
-
-    # Финальная проверка всех настроек
-    if ! sysctl -p "$temp_config" &>/dev/null; then
-        log_error "Ошибка в дополнительных настройках"
-        rm -f "$temp_config"
-        exit 1
-    fi
 
     # Копирование проверенной конфигурации
     if ! cp "$temp_config" "$SYSCTL_CONFIG"; then
