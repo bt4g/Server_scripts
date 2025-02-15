@@ -2,8 +2,8 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-15 06:59:54 UTC
-# Last Modified: 2025-02-15 06:59:54 UTC
+# Created: 2025-02-15 18:03:59 UTC
+# Last Modified: 2025-02-15 18:03:59 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -18,7 +18,7 @@ readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly CURRENT_DATE="2025-02-15 06:59:54"
+readonly CURRENT_DATE="2025-02-15 18:03:59"
 readonly CURRENT_USER="gopnikgame"
 
 # Функция логирования
@@ -166,10 +166,11 @@ select_kernel_version() {
         
         echo -e "\n\033[1;33mℹ️  Информация о системе:\033[0m"
         echo "----------------------------------------"
-        echo -e "Текущая дата:      \033[1;36m2025-02-15 07:04:03\033[0m"
-        echo -e "Пользователь:      \033[1;36mgopnikgame\033[0m"
+        echo -e "Текущая дата:      \033[1;36m$CURRENT_DATE\033[0m"
+        echo -e "Пользователь:      \033[1;36m$CURRENT_USER\033[0m"
         echo -e "Текущее ядро:      \033[1;36m$(uname -r)\033[0m"
         echo -e "Оптимизация CPU:    \033[1;32m${PSABI_VERSION}\033[0m"
+        echo -e "BBR3 поддержка:     \033[1;32mВключена\033[0m"
         echo "----------------------------------------"
         
         echo -e "\n\033[1;33m📦 Доступные версии ядра:\033[0m"
@@ -237,9 +238,9 @@ install_kernel() {
 
     # Настройка параметров загрузки для BBR3
     log "Настройка параметров загрузки ядра..."
-    if ! grep -q "tcp_congestion_control=bbr3" /etc/default/grub; then
+    if ! grep -q "tcp_congestion_control=bbr" /etc/default/grub; then
         cp /etc/default/grub /etc/default/grub.backup
-        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="tcp_congestion_control=bbr3 /' /etc/default/grub
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="tcp_congestion_control=bbr /' /etc/default/grub
         log "✓ Параметры загрузки обновлены"
     fi
 
@@ -275,16 +276,17 @@ configure_bbr() {
     temp_config=$(mktemp)
     
     cat > "$temp_config" <<EOF
-# Основные настройки
+# BBR3 core settings
 net.core.default_qdisc=fq_pie
+net.ipv4.tcp_congestion_control=bbr
 
-# TCP настройки
+# TCP optimizations for XanMod
 net.ipv4.tcp_ecn=1
 net.ipv4.tcp_timestamps=1
 net.ipv4.tcp_sack=1
 net.ipv4.tcp_low_latency=1
 
-# Настройки буферов
+# Buffer settings optimized for 10Gbit+ networks
 net.core.rmem_max=67108864
 net.core.wmem_max=67108864
 net.core.rmem_default=1048576
@@ -293,10 +295,27 @@ net.core.optmem_max=65536
 net.ipv4.tcp_rmem=4096 1048576 67108864
 net.ipv4.tcp_wmem=4096 1048576 67108864
 
-# Дополнительные оптимизации
+# BBR3 specific optimizations
 net.ipv4.tcp_fastopen=3
 net.ipv4.tcp_window_scaling=1
 net.ipv4.tcp_notsent_lowat=131072
+net.core.netdev_max_backlog=16384
+net.core.somaxconn=8192
+net.ipv4.tcp_max_syn_backlog=8192
+net.ipv4.tcp_max_tw_buckets=2000000
+net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_fin_timeout=10
+net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.tcp_keepalive_time=60
+net.ipv4.tcp_keepalive_intvl=10
+net.ipv4.tcp_keepalive_probes=6
+net.ipv4.tcp_mtu_probing=1
+net.ipv4.tcp_syncookies=1
+
+# Additional XanMod optimizations
+net.core.busy_read=50
+net.core.busy_poll=50
+net.ipv4.tcp_max_orphans=16384
 EOF
 
     if ! sysctl -p "$temp_config" &>"$LOG_FILE"; then
@@ -314,6 +333,24 @@ EOF
 
     rm -f "$temp_config"
     log "✓ Сетевые настройки применены"
+
+    # Проверка загрузки модуля BBR
+    if ! lsmod | grep -q "^tcp_bbr "; then
+        log "Загрузка модуля tcp_bbr..."
+        modprobe tcp_bbr
+        if [ $? -ne 0 ]; then
+            log_error "Ошибка загрузки модуля tcp_bbr"
+            exit 1
+        fi
+    fi
+
+    # Проверка версии BBR
+    bbr_version=$(modinfo tcp_bbr | grep "^version:" | awk '{print $2}')
+    if [[ "$bbr_version" == "3" ]]; then
+        log "✓ Обнаружен BBR3 (версия модуля: $bbr_version)"
+    else
+        log_error "Неожиданная версия BBR: $bbr_version (ожидается 3)"
+    fi
     
     echo -e "\n\033[1;33mВажно: BBR3 будет активирован после перезагрузки\033[0m"
     check_bbr_version
@@ -327,12 +364,26 @@ check_bbr_version() {
     current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
     local current_qdisc
     current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "unknown")
+    local bbr_version
+    bbr_version=$(modinfo tcp_bbr 2>/dev/null | grep "^version:" | awk '{print $2}' || echo "unknown")
     
     echo -e "\n\033[1;33mТекущая конфигурация:\033[0m"
     echo "----------------------------------------"
     echo -e "Алгоритм управления:    \033[1;32m$current_cc\033[0m"
     echo -e "Планировщик очереди:    \033[1;32m$current_qdisc\033[0m"
+    echo -e "Версия BBR:             \033[1;32m$bbr_version\033[0m"
+    echo -e "ECN статус:             \033[1;32m$(sysctl -n net.ipv4.tcp_ecn)\033[0m"
     echo "----------------------------------------"
+
+    if [[ "$current_cc" == "bbr" && "$bbr_version" == "3" && "$current_qdisc" == "fq_pie" ]]; then
+        echo -e "\n\033[1;32m✓ BBR3 правильно настроен и активен\033[0m"
+    else
+        echo -e "\n\033[1;31m⚠ BBR3 настроен некорректно\033[0m"
+        echo -e "\nОжидаемые значения:"
+        echo -e "- tcp_congestion_control: bbr"
+        echo -e "- BBR версия: 3"
+        echo -e "- default_qdisc: fq_pie"
+    fi
 }
 
 # Создание сервиса автозапуска
