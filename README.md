@@ -9,8 +9,8 @@
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/install_xanmod.sh -o /tmp/install_xanmod.sh && \
-sed -i "s/CURRENT_DATE=.*$/CURRENT_DATE=\"2025-02-15 14:12:15\"/" /tmp/install_xanmod.sh && \
-sed -i "s/CURRENT_USER=.*$/CURRENT_USER=\"gopnikgame\"/" /tmp/install_xanmod.sh && \
+sed -i "s/CURRENT_DATE=.*$/CURRENT_DATE=\"$(date -u '+%Y-%m-%d %H:%M:%S')\"/" /tmp/install_xanmod.sh && \
+sed -i "s/CURRENT_USER=.*$/CURRENT_USER=\"$(whoami)\"/" /tmp/install_xanmod.sh && \
 sudo bash /tmp/install_xanmod.sh
 ```
 
@@ -23,8 +23,8 @@ log() {\
     echo -e "\\033[1;34m[$(date '\''+%Y-%m-%d %H:%M:%S'\'')]\\033[0m - $1"\
 }\
 ' > /tmp/bbr_info.sh && \
-sed -i "s/CURRENT_DATE=.*$/CURRENT_DATE=\"2025-02-15 14:12:15\"/" /tmp/bbr_info.sh && \
-sed -i "s/CURRENT_USER=.*$/CURRENT_USER=\"gopnikgame\"/" /tmp/bbr_info.sh && \
+sed -i "s/CURRENT_DATE=.*$/CURRENT_DATE=\"$(date -u '+%Y-%m-%d %H:%M:%S')\"/" /tmp/bbr_info.sh && \
+sed -i "s/CURRENT_USER=.*$/CURRENT_USER=\"$(whoami)\"/" /tmp/bbr_info.sh && \
 chmod +x /tmp/bbr_info.sh && \
 sudo bash /tmp/bbr_info.sh
 ```
