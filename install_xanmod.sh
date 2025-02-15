@@ -105,7 +105,10 @@ check_disk_space() {
 get_psabi_version() {
     local level=1
     local flags
-    flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2)
+    
+    # Получаем флаги процессора и удаляем все пробелы
+    flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2 | tr -d ' \n\t')
+    
     if [[ $flags =~ avx512 ]]; then 
         level=4
     elif [[ $flags =~ avx2 ]]; then 
@@ -113,7 +116,9 @@ get_psabi_version() {
     elif [[ $flags =~ sse4_2 ]]; then 
         level=2
     fi
-    printf "x64v%d" "$level"  # Используем printf вместо echo
+    
+    # Используем printf для гарантированного вывода без переноса строки
+    printf 'x64v%d' "$level"
 }
 
 # Функция выбора версии ядра
@@ -195,32 +200,52 @@ select_kernel_version() {
 install_kernel() {
     print_header "Установка ядра XanMod"
     
+    # Добавление репозитория, если его нет
     if [ ! -f "/etc/apt/trusted.gpg.d/xanmod-kernel.gpg" ]; then
         log "Добавление репозитория XanMod..."
-        curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg || {
+        if ! curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg; then
             log_error "Ошибка при добавлении ключа"
             exit 1
-        }
-        echo 'deb [signed-by=/etc/apt/trusted.gpg.d/xanmod-kernel.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-kernel.list || {
+        fi
+        
+        if ! echo 'deb [signed-by=/etc/apt/trusted.gpg.d/xanmod-kernel.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-kernel.list; then
             log_error "Ошибка при добавлении репозитория"
             exit 1
-        }
-        apt-get update -qq || {
+        fi
+        
+        if ! apt-get update -qq; then
             log_error "Ошибка при обновлении пакетов"
             exit 1
-        }
+        fi
         log "✓ Репозиторий XanMod успешно добавлен"
     fi
 
+    # Получение и очистка имени пакета
     local KERNEL_PACKAGE
-    KERNEL_PACKAGE=$(select_kernel_version | tr -d '\n')  # Удаляем символы новой строки
+    KERNEL_PACKAGE=$(select_kernel_version | tr -d '\n\r' | sed 's/[[:space:]]//g')
 
+    # Проверка, что имя пакета не пустое
+    if [ -z "$KERNEL_PACKAGE" ]; then
+        log_error "Не удалось определить имя пакета"
+        exit 1
+    fi
+
+    # Вывод информации об устанавливаемом пакете
     echo -e "\n\033[1;33mУстановка пакета: ${KERNEL_PACKAGE}\033[0m"
-    if ! apt-get install -y "${KERNEL_PACKAGE}"; then
+    
+    # Проверка доступности пакета
+    if ! apt-cache show "$KERNEL_PACKAGE" >/dev/null 2>&1; then
+        log_error "Пакет $KERNEL_PACKAGE не найден в репозитории"
+        exit 1
+    fi
+
+    # Установка пакета
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "$KERNEL_PACKAGE"; then
         log_error "Ошибка при установке ядра"
         exit 1
     fi
 
+    # Обновление GRUB
     log "Обновление конфигурации GRUB..."
     if ! update-grub; then
         log_error "Ошибка при обновлении GRUB"
