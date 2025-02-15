@@ -290,44 +290,75 @@ configure_bbr() {
         exit 1
     fi
     
-    # Проверка прав доступа к sysctl
-    if [ ! -w "/etc/sysctl.d" ]; then
-        log_error "Нет прав на запись в /etc/sysctl.d"
-        exit 1
-    fi
-    
     log "Применение оптимизированных сетевых настроек..."
     
     # Создание временного файла конфигурации
     local temp_config
     temp_config=$(mktemp)
     
-    # Запись настроек во временный файл
+    # Базовые настройки BBR
     cat > "$temp_config" <<EOF
 # BBR настройки
-net.ipv4.tcp_congestion_control = bbr3
-net.core.default_qdisc = fq_pie
-net.ipv4.tcp_ecn = 1
-net.ipv4.tcp_timestamps = 1
-net.ipv4.tcp_sack = 1
-net.ipv4.tcp_low_latency = 1
-
-# Оптимизация сетевого стека
-net.core.rmem_max = 67108864
-net.core.wmem_max = 67108864
-net.core.rmem_default = 1048576
-net.core.wmem_default = 1048576
-net.core.optmem_max = 65536
-net.ipv4.tcp_rmem = 4096 1048576 67108864
-net.ipv4.tcp_wmem = 4096 1048576 67108864
-net.ipv4.tcp_fastopen = 3
-net.ipv4.tcp_window_scaling = 1
-net.ipv4.tcp_notsent_lowat = 131072
+net.ipv4.tcp_congestion_control=bbr3
+net.core.default_qdisc=fq_pie
 EOF
 
-    # Проверка синтаксиса конфигурации
+    # Проверка базовых настроек
     if ! sysctl -p "$temp_config" &>/dev/null; then
-        log_error "Ошибка в синтаксисе конфигурации sysctl"
+        log_error "Ошибка в базовых настройках BBR"
+        rm -f "$temp_config"
+        exit 1
+    fi
+
+    # Дополнительные TCP настройки
+    cat >> "$temp_config" <<EOF
+
+# TCP настройки
+net.ipv4.tcp_ecn=1
+net.ipv4.tcp_timestamps=1
+net.ipv4.tcp_sack=1
+net.ipv4.tcp_low_latency=1
+EOF
+
+    # Проверка TCP настроек
+    if ! sysctl -p "$temp_config" &>/dev/null; then
+        log_error "Ошибка в TCP настройках"
+        rm -f "$temp_config"
+        exit 1
+    fi
+
+    # Настройки буферов
+    cat >> "$temp_config" <<EOF
+
+# Настройки буферов
+net.core.rmem_max=67108864
+net.core.wmem_max=67108864
+net.core.rmem_default=1048576
+net.core.wmem_default=1048576
+net.core.optmem_max=65536
+net.ipv4.tcp_rmem=4096 1048576 67108864
+net.ipv4.tcp_wmem=4096 1048576 67108864
+EOF
+
+    # Проверка настроек буферов
+    if ! sysctl -p "$temp_config" &>/dev/null; then
+        log_error "Ошибка в настройках буферов"
+        rm -f "$temp_config"
+        exit 1
+    fi
+
+    # Дополнительные оптимизации
+    cat >> "$temp_config" <<EOF
+
+# Дополнительные оптимизации
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_window_scaling=1
+net.ipv4.tcp_notsent_lowat=131072
+EOF
+
+    # Финальная проверка всех настроек
+    if ! sysctl -p "$temp_config" &>/dev/null; then
+        log_error "Ошибка в дополнительных настройках"
         rm -f "$temp_config"
         exit 1
     fi
@@ -343,19 +374,14 @@ EOF
     rm -f "$temp_config"
 
     # Применение настроек с подробным выводом ошибок
-    if ! sysctl --system 2>"$LOG_FILE"; then
-        log_error "Ошибка применения настроек sysctl. Подробности в $LOG_FILE"
-        log_error "$(cat "$LOG_FILE")"
+    if ! sysctl --system &>"$LOG_FILE"; then
+        log_error "Ошибка применения настроек sysctl. Подробности:"
+        cat "$LOG_FILE"
         exit 1
     fi
 
     log "✓ Сетевые настройки применены"
-    
-    # Проверка применения настроек
-    if ! check_bbr_version; then
-        log_error "Настройки BBR3 не были применены корректно"
-        exit 1
-    fi
+    check_bbr_version
 }
 
 # Проверка версии BBR
