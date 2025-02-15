@@ -2,8 +2,8 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-15 05:16:59 UTC
-# Last Modified: 2025-02-15 05:16:59 UTC
+# Created: 2025-02-15 05:50:46 UTC
+# Last Modified: 2025-02-15 05:50:46 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -18,23 +18,24 @@ readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly CURRENT_DATE="2025-02-15 05:16:59"
+readonly CURRENT_DATE="2025-02-15 05:50:46"
 readonly CURRENT_USER="gopnikgame"
 
 # Функция логирования
 log() {
-    echo -e "\\033[1;34m[$(date '+%Y-%m-%d %H:%M:%S')]\\033[0m - $1" | tee -a "$LOG_FILE"
+    echo -e "\033[1;34m[$(date '+%Y-%m-%d %H:%M:%S')]\033[0m - $1" | tee -a "$LOG_FILE"
 }
 
 # Функция вывода заголовка
 print_header() {
-    echo -e "\\n\\033[1;32m=== $1 ===\\033[0m\\n" | tee -a "$LOG_FILE"
+    echo -e "\n\033[1;32m=== $1 ===\033[0m\n" | tee -a "$LOG_FILE"
 }
 
 # Функция вывода ошибки
 log_error() {
-    echo -e "\\033[1;31m[ОШИБКА] - $1\\033[0m" | tee -a "$LOG_FILE"
+    echo -e "\033[1;31m[ОШИБКА] - $1\033[0m" | tee -a "$LOG_FILE"
 }
+
 # Проверка прав root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -107,7 +108,7 @@ get_psabi_version() {
     local flags
     
     # Получаем флаги процессора и удаляем все пробелы
-    flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2 | tr -d ' \n\t')
+    flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2 | tr -d ' \n\t\r')
     
     if [[ $flags =~ avx512 ]]; then 
         level=4
@@ -117,14 +118,14 @@ get_psabi_version() {
         level=2
     fi
     
-    # Используем printf для гарантированного вывода без переноса строки
+    # Важно: используем только printf без дополнительных символов
     printf 'x64v%d' "$level"
 }
 
 # Функция выбора версии ядра
 select_kernel_version() {
     local PSABI_VERSION
-    PSABI_VERSION=$(get_psabi_version)
+    PSABI_VERSION=$(get_psabi_version | tr -d '\n\r')
     
     # Очищаем экран для лучшей читаемости
     clear
@@ -136,11 +137,12 @@ select_kernel_version() {
         # Информация о системе с актуальными данными
         echo -e "\n\033[1;33mℹ️  Информация о системе:\033[0m"
         echo "----------------------------------------"
-        echo -e "Текущая дата:      \033[1;36m2025-02-15 05:17:43 UTC\033[0m"
-        echo -e "Пользователь:      \033[1;36mgopnikgame\033[0m"
+        echo -e "Текущая дата:      \033[1;36m$CURRENT_DATE\033[0m"
+        echo -e "Пользователь:      \033[1;36m$CURRENT_USER\033[0m"
         echo -e "Текущее ядро:      \033[1;36m$(uname -r)\033[0m"
         echo -e "Оптимизация CPU:    \033[1;32m${PSABI_VERSION}\033[0m"
         echo "----------------------------------------"
+        
         # Таблица версий с описанием
         echo -e "\n\033[1;33m📦 Доступные версии ядра:\033[0m"
         echo "----------------------------------------"
@@ -157,7 +159,7 @@ select_kernel_version() {
         echo -e "\033[1;35m3) RT\033[0m              - Оптимизирована для задач реального времени"
         echo -e "\033[1;34m4) LTS\033[0m             - Версия с долгосрочной поддержкой"
         
-        # Особенности (исправленная версия)
+        # Особенности
         echo -e "\n\033[1;33m🔧 Рекомендации по выбору:\033[0m"
         echo -e "• Для домашних ПК и серверов   → \033[1;32mСтабильная (1)\033[0m"
         echo -e "• Для энтузиастов              → \033[1;33mEdge (2)\033[0m"
@@ -174,18 +176,23 @@ select_kernel_version() {
     local KERNEL_PACKAGE
     case $choice in
         2)
-            KERNEL_PACKAGE="linux-xanmod-edge-${PSABI_VERSION}"
+            KERNEL_PACKAGE="linux-xanmod-edge"
             ;;
         3)
-            KERNEL_PACKAGE="linux-xanmod-rt-${PSABI_VERSION}"
+            KERNEL_PACKAGE="linux-xanmod-rt"
             ;;
         4)
-            KERNEL_PACKAGE="linux-xanmod-lts-${PSABI_VERSION}"
+            KERNEL_PACKAGE="linux-xanmod-lts"
             ;;
         *)
-            KERNEL_PACKAGE="linux-xanmod-${PSABI_VERSION}"
+            KERNEL_PACKAGE="linux-xanmod"
             ;;
     esac
+    
+    # Добавляем суффикс версии только если это не RT версия
+    if [[ $KERNEL_PACKAGE != "linux-xanmod-rt" ]]; then
+        KERNEL_PACKAGE="${KERNEL_PACKAGE}-${PSABI_VERSION}"
+    fi
     
     # Выводим выбранную версию без лишних переносов строк
     {
@@ -193,7 +200,7 @@ select_kernel_version() {
         echo "----------------------------------------"
     } > /dev/tty
 
-    printf "%s" "$KERNEL_PACKAGE"  # Используем printf вместо echo
+    printf "%s" "$KERNEL_PACKAGE"
 }
 
 # Установка ядра
@@ -220,22 +227,27 @@ install_kernel() {
         log "✓ Репозиторий XanMod успешно добавлен"
     fi
 
-    # Получение и очистка имени пакета
+    # Получение имени пакета и очистка от лишних символов
     local KERNEL_PACKAGE
-    KERNEL_PACKAGE=$(select_kernel_version | tr -d '\n\r' | sed 's/[[:space:]]//g')
+    KERNEL_PACKAGE=$(select_kernel_version | tr -d '\n\r' | tr -d '[:space:]')
 
-    # Проверка, что имя пакета не пустое
+    # Проверка имени пакета
     if [ -z "$KERNEL_PACKAGE" ]; then
-        log_error "Не удалось определить имя пакета"
+        log_error "Ошибка: имя пакета пустое"
         exit 1
     fi
 
     # Вывод информации об устанавливаемом пакете
     echo -e "\n\033[1;33mУстановка пакета: ${KERNEL_PACKAGE}\033[0m"
     
+    # Обновляем список пакетов перед проверкой
+    apt-get update -qq
+
     # Проверка доступности пакета
     if ! apt-cache show "$KERNEL_PACKAGE" >/dev/null 2>&1; then
         log_error "Пакет $KERNEL_PACKAGE не найден в репозитории"
+        echo -e "\nДоступные пакеты XanMod:"
+        apt-cache search linux-xanmod
         exit 1
     fi
 
@@ -255,6 +267,7 @@ install_kernel() {
     echo "kernel_installed" > "$STATE_FILE"
     log "✓ Ядро успешно установлено"
 }
+
 # Настройка BBR
 configure_bbr() {
     print_header "Настройка TCP BBR3"
@@ -307,6 +320,7 @@ check_bbr_version() {
     local current_qdisc
     current_qdisc=$(sysctl -n net.core.default_qdisc)
     
+    echo -e "\n\033[1;33mТ
     echo -e "\n\033[1;33mТекущая конфигурация:\033[0m"
     echo "----------------------------------------"
     echo -e "Алгоритм управления:    \033[1;32m$current_cc\033[0m"
