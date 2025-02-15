@@ -2,8 +2,8 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-15 04:39:12 UTC
-# Last Modified: 2025-02-15 04:39:12 UTC
+# Created: 2025-02-15 05:16:59 UTC
+# Last Modified: 2025-02-15 05:16:59 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -18,7 +18,7 @@ readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly CURRENT_DATE="2025-02-15 04:39:12"
+readonly CURRENT_DATE="2025-02-15 05:16:59"
 readonly CURRENT_USER="gopnikgame"
 
 # Функция логирования
@@ -35,7 +35,6 @@ print_header() {
 log_error() {
     echo -e "\\033[1;31m[ОШИБКА] - $1\\033[0m" | tee -a "$LOG_FILE"
 }
-
 # Проверка прав root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -114,7 +113,7 @@ get_psabi_version() {
     elif [[ $flags =~ sse4_2 ]]; then 
         level=2
     fi
-    echo "x64v$level"
+    printf "x64v%d" "$level"  # Используем printf вместо echo
 }
 
 # Функция выбора версии ядра
@@ -132,12 +131,11 @@ select_kernel_version() {
         # Информация о системе с актуальными данными
         echo -e "\n\033[1;33mℹ️  Информация о системе:\033[0m"
         echo "----------------------------------------"
-        echo -e "Текущая дата:      \033[1;36m2025-02-15 04:53:06 UTC\033[0m"
+        echo -e "Текущая дата:      \033[1;36m2025-02-15 05:17:43 UTC\033[0m"
         echo -e "Пользователь:      \033[1;36mgopnikgame\033[0m"
         echo -e "Текущее ядро:      \033[1;36m$(uname -r)\033[0m"
         echo -e "Оптимизация CPU:    \033[1;32m${PSABI_VERSION}\033[0m"
         echo "----------------------------------------"
-        
         # Таблица версий с описанием
         echo -e "\n\033[1;33m📦 Доступные версии ядра:\033[0m"
         echo "----------------------------------------"
@@ -184,13 +182,13 @@ select_kernel_version() {
             ;;
     esac
     
-    # Выводим выбранную версию
+    # Выводим выбранную версию без лишних переносов строк
     {
-        echo -e "\n\033[1;32mВыбрана версия:\033[0m $KERNEL_PACKAGE"
+        echo -e "\n\033[1;32mВыбрана версия:\033[0m ${KERNEL_PACKAGE}"
         echo "----------------------------------------"
     } > /dev/tty
 
-    echo "$KERNEL_PACKAGE"
+    printf "%s" "$KERNEL_PACKAGE"  # Используем printf вместо echo
 }
 
 # Установка ядра
@@ -215,24 +213,23 @@ install_kernel() {
     fi
 
     local KERNEL_PACKAGE
-    KERNEL_PACKAGE=$(select_kernel_version)
+    KERNEL_PACKAGE=$(select_kernel_version | tr -d '\n')  # Удаляем символы новой строки
 
-    echo -e "\\n\\033[1;33mУстановка пакета: $KERNEL_PACKAGE\\033[0m"
-    apt-get install -y "$KERNEL_PACKAGE" || {
+    echo -e "\n\033[1;33mУстановка пакета: ${KERNEL_PACKAGE}\033[0m"
+    if ! apt-get install -y "${KERNEL_PACKAGE}"; then
         log_error "Ошибка при установке ядра"
         exit 1
-    }
+    fi
 
     log "Обновление конфигурации GRUB..."
-    update-grub || {
+    if ! update-grub; then
         log_error "Ошибка при обновлении GRUB"
         exit 1
-    }
+    fi
 
     echo "kernel_installed" > "$STATE_FILE"
     log "✓ Ядро успешно установлено"
 }
-
 # Настройка BBR
 configure_bbr() {
     print_header "Настройка TCP BBR3"
@@ -285,11 +282,11 @@ check_bbr_version() {
     local current_qdisc
     current_qdisc=$(sysctl -n net.core.default_qdisc)
     
-    echo -e "\\n\\033[1;33mТекущая конфигурация:\\033[0m"
+    echo -e "\n\033[1;33mТекущая конфигурация:\033[0m"
     echo "----------------------------------------"
-    echo -e "Алгоритм управления:    \\033[1;32m$current_cc\\033[0m"
-    echo -e "Доступные алгоритмы:    \\033[1;36m$available_cc\\033[0m"
-    echo -e "Планировщик очереди:    \\033[1;32m$current_qdisc\\033[0m"
+    echo -e "Алгоритм управления:    \033[1;32m$current_cc\033[0m"
+    echo -e "Доступные алгоритмы:    \033[1;36m$available_cc\033[0m"
+    echo -e "Планировщик очереди:    \033[1;32m$current_qdisc\033[0m"
     echo "----------------------------------------"
     
     if [[ "$current_cc" != "bbr3" ]]; then
@@ -353,9 +350,9 @@ main() {
             remove_startup_service
             rm -f "$STATE_FILE"
             print_header "Установка успешно завершена!"
-            echo -e "\\nДля проверки работы BBR3 используйте команды:"
-            echo -e "\\033[1;36msysctl net.ipv4.tcp_congestion_control\\033[0m"
-            echo -e "\\033[1;36msysctl net.core.default_qdisc\\033[0m\\n"
+            echo -e "\nДля проверки работы BBR3 используйте команды:"
+            echo -e "\033[1;36msysctl net.ipv4.tcp_congestion_control\033[0m"
+            echo -e "\033[1;36msysctl net.core.default_qdisc\033[0m\n"
         else
             log_error "Файл состояния не найден"
             exit 1
@@ -368,7 +365,7 @@ main() {
         check_disk_space
         install_kernel
         create_startup_service
-        echo -e "\\n\\033[1;33mУстановка завершена. Система будет перезагружена через 5 секунд...\\033[0m"
+        echo -e "\n\033[1;33mУстановка завершена. Система будет перезагружена через 5 секунд...\033[0m"
         sleep 5
         reboot
     fi
