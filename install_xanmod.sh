@@ -2,8 +2,8 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-15 05:57:25 UTC
-# Last Modified: 2025-02-15 05:57:25 UTC
+# Created: 2025-02-15 06:14:51 UTC
+# Last Modified: 2025-02-15 06:14:51 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -18,7 +18,7 @@ readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly CURRENT_DATE="2025-02-15 05:57:25"
+readonly CURRENT_DATE="2025-02-15 06:14:51"
 readonly CURRENT_USER="gopnikgame"
 
 # Функция логирования
@@ -44,7 +44,40 @@ check_root() {
     fi
 }
 
-# Проверка операционной системы
+# Проверка наличия XanMod
+check_xanmod() {
+    if uname -r | grep -q "xanmod"; then
+        local current_kernel
+        current_kernel=$(uname -r)
+        log "Обнаружено установленное ядро XanMod: $current_kernel"
+        
+        if [ -f "$STATE_FILE" ]; then
+            log "Найден файл состояния установки. Продолжаем настройку..."
+            configure_bbr
+            remove_startup_service
+            rm -f "$STATE_FILE"
+            print_header "Установка успешно завершена!"
+            echo -e "\nДля проверки работы BBR3 используйте команды:"
+            echo -e "\033[1;36msysctl net.ipv4.tcp_congestion_control\033[0m"
+            echo -e "\033[1;36msysctl net.core.default_qdisc\033[0m\n"
+            exit 0
+        else
+            echo -e "\n\033[1;33mВнимание: Ядро XanMod уже установлено.\033[0m"
+            read -rp $'Хотите переустановить? [y/N]: ' answer
+            case $answer in
+                [Yy]* ) 
+                    log "Пользователь выбрал переустановку"
+                    return 0
+                    ;;
+                * )
+                    log "Установка отменена пользователем"
+                    exit 0
+                    ;;
+            esac
+        fi
+    fi
+}
+
 # Проверка операционной системы
 check_os() {
     print_header "Проверка системы"
@@ -105,39 +138,7 @@ check_disk_space() {
     fi
     log "✓ Доступно $(( available_space / 1024 )) ГБ свободного места"
 }
-# Проверка наличия XanMod
-check_xanmod() {
-    if uname -r | grep -q "xanmod"; then
-        local current_kernel
-        current_kernel=$(uname -r)
-        log "Обнаружено установленное ядро XanMod: $current_kernel"
-        
-        if [ -f "$STATE_FILE" ]; then
-            log "Найден файл состояния установки. Продолжаем настройку..."
-            configure_bbr
-            remove_startup_service
-            rm -f "$STATE_FILE"
-            print_header "Установка успешно завершена!"
-            echo -e "\nДля проверки работы BBR3 используйте команды:"
-            echo -e "\033[1;36msysctl net.ipv4.tcp_congestion_control\033[0m"
-            echo -e "\033[1;36msysctl net.core.default_qdisc\033[0m\n"
-            exit 0
-        else
-            echo -e "\n\033[1;33mВнимание: Ядро XanMod уже установлено.\033[0m"
-            read -rp $'Хотите переустановить? [y/N]: ' answer
-            case $answer in
-                [Yy]* ) 
-                    log "Пользователь выбрал переустановку"
-                    return 0
-                    ;;
-                * )
-                    log "Установка отменена пользователем"
-                    exit 0
-                    ;;
-            esac
-        fi
-    fi
-}
+
 # Определение PSABI версии
 get_psabi_version() {
     local level=1
@@ -205,7 +206,6 @@ select_kernel_version() {
         *) KERNEL_PACKAGE="linux-xanmod";;
     esac
 
-    # Добавляем суффикс версии только для не-RT версий
     if [[ $KERNEL_PACKAGE != "linux-xanmod-rt" ]]; then
         KERNEL_PACKAGE="${KERNEL_PACKAGE}-${PSABI_VERSION}"
     fi
@@ -381,13 +381,7 @@ remove_startup_service() {
 
 # Главная функция
 main() {
-    local continue_installation=0
-    
-    if [[ "${1:-}" == "--continue" ]]; then
-        continue_installation=1
-    fi
-
-    if [ "$continue_installation" -eq 1 ] && [ -f "$STATE_FILE" ]; then
+    if [[ "${1:-}" == "--continue" ]] && [ -f "$STATE_FILE" ]; then
         configure_bbr
         remove_startup_service
         rm -f "$STATE_FILE"
@@ -395,18 +389,19 @@ main() {
         echo -e "\nДля проверки работы BBR3 используйте команды:"
         echo -e "\033[1;36msysctl net.ipv4.tcp_congestion_control\033[0m"
         echo -e "\033[1;36msysctl net.core.default_qdisc\033[0m\n"
-    else
-        print_header "Установка XanMod Kernel v$SCRIPT_VERSION"
-        check_root
-        check_os
-        check_internet
-        check_disk_space
-        install_kernel
-        create_startup_service
-        echo -e "\n\033[1;33mУстановка завершена. Система будет перезагружена через 5 секунд...\033[0m"
-        sleep 5
-        reboot
+        exit 0
     fi
+
+    print_header "Установка XanMod Kernel v$SCRIPT_VERSION"
+    check_root
+    check_os
+    check_internet
+    check_disk_space
+    install_kernel
+    create_startup_service
+    echo -e "\n\033[1;33mУстановка завершена. Система будет перезагружена через 5 секунд...\033[0m"
+    sleep 5
+    reboot
 }
 
 # Запуск скрипта
