@@ -1,42 +1,97 @@
 #!/bin/bash
 
-check_bbr_version() {
-    log "Проверка версии BBR..."
-    
-    # Проверяем текущий алгоритм управления перегрузкой
-    local current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
-    log "Текущий алгоритм управления перегрузкой: $current_cc"
+# Version: 1.0.0
+# Author: gopnikgame
+CURRENT_DATE="2025-02-15 16:56:41"
+CURRENT_USER="gopnikgame"
 
-    # Проверяем доступные алгоритмы
-    local available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control)
-    log "Доступные алгоритмы: $available_cc"
-
-    # Определяем версию BBR
-    if [[ "$current_cc" == "bbr" ]]; then
-        if sysctl net.ipv4.tcp_bbr2_parameters &>/dev/null; then
-            log "Используется BBRv2"
-            sysctl net.ipv4.tcp_bbr2_parameters
-        elif sysctl net.ipv4.tcp_bbr3_congestion_control &>/dev/null; then
-            log "Используется BBRv3"
-            sysctl net.ipv4.tcp_bbr3_congestion_control
-        else
-            log "Используется BBRv1"
-        fi
-
-        # Проверяем параметры очереди
-        local qdisc=$(sysctl -n net.core.default_qdisc)
-        log "Текущий планировщик очереди: $qdisc"
-
-        # Проверяем активность BBR
-        if grep -q "bbr" /proc/sys/net/ipv4/tcp_congestion_control; then
-            log "BBR активен и работает"
-        else
-            log "BBR установлен, но не активен"
-        fi
-    else
-        log "BBR не используется. Текущий алгоритм: $current_cc"
-    fi
+# Функция логирования
+log() {
+    echo -e "\033[1;34m[$(date '+%Y-%m-%d %H:%M:%S')]\033[0m - $1"
 }
 
-# Для использования функции:
-check_bbr_version
+log_error() {
+    echo -e "\033[1;31m[ОШИБКА] - $1\033[0m"
+}
+
+print_bbr_phase() {
+    case "$1" in
+        1) echo "STARTUP - начальная фаза разгона" ;;
+        2) echo "DRAIN - дренаж очереди" ;;
+        3) echo "PROBE_RTT - измерение минимального RTT" ;;
+        4) echo "PROBE_BW_UP - увеличение пропускной способности" ;;
+        5) echo "PROBE_BW_DOWN - уменьшение пропускной способности" ;;
+        6) echo "PROBE_BW_CRUISE - круизный режим" ;;
+        7) echo "PROBE_BW_REFILL - наполнение" ;;
+        *) echo "Неизвестная фаза" ;;
+    esac
+}
+
+log "Проверка конфигурации BBR..."
+
+# Проверка текущего алгоритма
+current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
+log "Текущий алгоритм управления перегрузкой: $current_cc"
+
+# Проверка версии модуля BBR
+bbr_version=$(modinfo tcp_bbr | grep "^version:" | awk '{print $2}')
+if [[ "$bbr_version" == "3" ]]; then
+    log "✓ Используется BBRv3 (версия модуля: $bbr_version)"
+else
+    log_error "Неожиданная версия BBR: $bbr_version (ожидается 3)"
+fi
+
+# Проверка доступных алгоритмов
+available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control)
+log "Доступные алгоритмы: $available_cc"
+
+# Проверка планировщика очереди
+qdisc=$(sysctl -n net.core.default_qdisc)
+log "Текущий планировщик очереди: $qdisc"
+if [[ "$qdisc" == "fq_pie" ]]; then
+    log "✓ Используется оптимальный планировщик очереди для BBR3 (fq_pie)"
+else
+    log_error "Неоптимальный планировщик очереди: $qdisc (рекомендуется fq_pie для BBR3)"
+fi
+
+# Вывод текущих сетевых настроек
+echo -e "\n\033[1;33mТекущие сетевые настройки:\033[0m"
+echo "----------------------------------------"
+{
+    echo "Размеры буферов:"
+    sysctl -n net.core.rmem_max
+    sysctl -n net.core.wmem_max
+    sysctl -n net.core.rmem_default
+    sysctl -n net.core.wmem_default
+    echo "TCP настройки:"
+    sysctl -n net.ipv4.tcp_rmem
+    sysctl -n net.ipv4.tcp_wmem
+    sysctl -n net.ipv4.tcp_fastopen
+    sysctl -n net.ipv4.tcp_ecn
+} | column -t
+
+echo -e "\n\033[1;33mСтатистика BBR для активных соединений:\033[0m"
+echo "----------------------------------------"
+ss -iti | grep -i bbr | while read -r line; do
+    phase=$(echo "$line" | awk '{print $8}')
+    echo -e "Фаза BBR: $(print_bbr_phase "$phase")"
+    echo "$line"
+done
+
+# Проверка ECN
+ecn_status=$(sysctl -n net.ipv4.tcp_ecn)
+log "Статус ECN: $([[ "$ecn_status" == "1" ]] && echo "включен" || echo "выключен")"
+
+# Итоговая проверка
+if [[ "$current_cc" == "bbr" && "$bbr_version" == "3" && "$qdisc" == "fq_pie" ]]; then
+    log "✓ BBR3 активен и правильно настроен"
+    
+    echo -e "\n\033[1;32mСистема оптимально настроена для BBR3\033[0m"
+else
+    log_error "BBR3 настроен некорректно"
+    
+    echo -e "\n\033[1;33mРекомендации по исправлению:\033[0m"
+    [[ "$current_cc" != "bbr" ]] && echo "- Установите 'net.ipv4.tcp_congestion_control=bbr'"
+    [[ "$qdisc" != "fq_pie" ]] && echo "- Установите 'net.core.default_qdisc=fq_pie'"
+    [[ "$ecn_status" != "1" ]] && echo "- Включите ECN: 'net.ipv4.tcp_ecn=1'"
+fi
