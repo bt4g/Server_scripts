@@ -45,8 +45,12 @@ check_root() {
 }
 
 # Проверка операционной системы
+# Проверка операционной системы
 check_os() {
     print_header "Проверка системы"
+    
+    # Сначала проверяем XanMod
+    check_xanmod
     
     if [ ! -f /etc/os-release ]; then
         log_error "Файл /etc/os-release не найден"
@@ -101,7 +105,39 @@ check_disk_space() {
     fi
     log "✓ Доступно $(( available_space / 1024 )) ГБ свободного места"
 }
-
+# Проверка наличия XanMod
+check_xanmod() {
+    if uname -r | grep -q "xanmod"; then
+        local current_kernel
+        current_kernel=$(uname -r)
+        log "Обнаружено установленное ядро XanMod: $current_kernel"
+        
+        if [ -f "$STATE_FILE" ]; then
+            log "Найден файл состояния установки. Продолжаем настройку..."
+            configure_bbr
+            remove_startup_service
+            rm -f "$STATE_FILE"
+            print_header "Установка успешно завершена!"
+            echo -e "\nДля проверки работы BBR3 используйте команды:"
+            echo -e "\033[1;36msysctl net.ipv4.tcp_congestion_control\033[0m"
+            echo -e "\033[1;36msysctl net.core.default_qdisc\033[0m\n"
+            exit 0
+        else
+            echo -e "\n\033[1;33mВнимание: Ядро XanMod уже установлено.\033[0m"
+            read -rp $'Хотите переустановить? [y/N]: ' answer
+            case $answer in
+                [Yy]* ) 
+                    log "Пользователь выбрал переустановку"
+                    return 0
+                    ;;
+                * )
+                    log "Установка отменена пользователем"
+                    exit 0
+                    ;;
+            esac
+        fi
+    fi
+}
 # Определение PSABI версии
 get_psabi_version() {
     local level=1
@@ -351,19 +387,14 @@ main() {
         continue_installation=1
     fi
 
-    if [ "$continue_installation" -eq 1 ]; then
-        if [ -f "$STATE_FILE" ]; then
-            configure_bbr
-            remove_startup_service
-            rm -f "$STATE_FILE"
-            print_header "Установка успешно завершена!"
-            echo -e "\nДля проверки работы BBR3 используйте команды:"
-            echo -e "\033[1;36msysctl net.ipv4.tcp_congestion_control\033[0m"
-            echo -e "\033[1;36msysctl net.core.default_qdisc\033[0m\n"
-        else
-            log_error "Файл состояния не найден"
-            exit 1
-        fi
+    if [ "$continue_installation" -eq 1 ] && [ -f "$STATE_FILE" ]; then
+        configure_bbr
+        remove_startup_service
+        rm -f "$STATE_FILE"
+        print_header "Установка успешно завершена!"
+        echo -e "\nДля проверки работы BBR3 используйте команды:"
+        echo -e "\033[1;36msysctl net.ipv4.tcp_congestion_control\033[0m"
+        echo -e "\033[1;36msysctl net.core.default_qdisc\033[0m\n"
     else
         print_header "Установка XanMod Kernel v$SCRIPT_VERSION"
         check_root
