@@ -2,8 +2,8 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-15 06:14:51 UTC
-# Last Modified: 2025-02-15 06:14:51 UTC
+# Created: 2025-02-15 06:30:03 UTC
+# Last Modified: 2025-02-15 06:30:03 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -18,7 +18,7 @@ readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly CURRENT_DATE="2025-02-15 06:14:51"
+readonly CURRENT_DATE="2025-02-15 06:30:03"
 readonly CURRENT_USER="gopnikgame"
 
 # Функция логирования
@@ -166,8 +166,8 @@ select_kernel_version() {
         
         echo -e "\n\033[1;33mℹ️  Информация о системе:\033[0m"
         echo "----------------------------------------"
-        echo -e "Текущая дата:      \033[1;36m$CURRENT_DATE\033[0m"
-        echo -e "Пользователь:      \033[1;36m$CURRENT_USER\033[0m"
+        echo -e "Текущая дата:      \033[1;36m2025-02-15 06:31:16\033[0m"
+        echo -e "Пользователь:      \033[1;36mgopnikgame\033[0m"
         echo -e "Текущее ядро:      \033[1;36m$(uname -r)\033[0m"
         echo -e "Оптимизация CPU:    \033[1;32m${PSABI_VERSION}\033[0m"
         echo "----------------------------------------"
@@ -222,6 +222,10 @@ select_kernel_version() {
 install_kernel() {
     print_header "Установка ядра XanMod"
     
+    # Проверка и создание директорий
+    mkdir -p /etc/apt/trusted.gpg.d
+    mkdir -p /etc/apt/sources.list.d
+    
     if [ ! -f "/etc/apt/trusted.gpg.d/xanmod-kernel.gpg" ]; then
         log "Добавление репозитория XanMod..."
         if ! curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg; then
@@ -259,7 +263,9 @@ install_kernel() {
         exit 1
     fi
 
-    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "$KERNEL_PACKAGE"; then
+    # Установка с явным указанием конфигурации GRUB
+    export DEBIAN_FRONTEND=noninteractive
+    if ! apt-get install -y "$KERNEL_PACKAGE" grub-pc; then
         log_error "Ошибка при установке ядра"
         exit 1
     fi
@@ -278,13 +284,26 @@ install_kernel() {
 configure_bbr() {
     print_header "Настройка TCP BBR3"
     
+    # Проверка наличия ядра XanMod
     if ! uname -r | grep -q "xanmod"; then
         log_error "Не обнаружено ядро XanMod"
         exit 1
     fi
     
+    # Проверка прав доступа к sysctl
+    if [ ! -w "/etc/sysctl.d" ]; then
+        log_error "Нет прав на запись в /etc/sysctl.d"
+        exit 1
+    fi
+    
     log "Применение оптимизированных сетевых настроек..."
-    cat > "$SYSCTL_CONFIG" <<EOF
+    
+    # Создание временного файла конфигурации
+    local temp_config
+    temp_config=$(mktemp)
+    
+    # Запись настроек во временный файл
+    cat > "$temp_config" <<EOF
 # BBR настройки
 net.ipv4.tcp_congestion_control = bbr3
 net.core.default_qdisc = fq_pie
@@ -306,12 +325,37 @@ net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_notsent_lowat = 131072
 EOF
 
-    sysctl --system >/dev/null 2>&1 || {
-        log_error "Ошибка применения настроек sysctl"
+    # Проверка синтаксиса конфигурации
+    if ! sysctl -p "$temp_config" &>/dev/null; then
+        log_error "Ошибка в синтаксисе конфигурации sysctl"
+        rm -f "$temp_config"
         exit 1
-    }
+    fi
+
+    # Копирование проверенной конфигурации
+    if ! cp "$temp_config" "$SYSCTL_CONFIG"; then
+        log_error "Ошибка при копировании конфигурации"
+        rm -f "$temp_config"
+        exit 1
+    fi
+
+    # Удаление временного файла
+    rm -f "$temp_config"
+
+    # Применение настроек с подробным выводом ошибок
+    if ! sysctl --system 2>"$LOG_FILE"; then
+        log_error "Ошибка применения настроек sysctl. Подробности в $LOG_FILE"
+        log_error "$(cat "$LOG_FILE")"
+        exit 1
+    fi
+
     log "✓ Сетевые настройки применены"
-    check_bbr_version
+    
+    # Проверка применения настроек
+    if ! check_bbr_version; then
+        log_error "Настройки BBR3 не были применены корректно"
+        exit 1
+    fi
 }
 
 # Проверка версии BBR
@@ -319,11 +363,11 @@ check_bbr_version() {
     log "Проверка конфигурации BBR..."
     
     local current_cc
-    current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
+    current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
     local available_cc
-    available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control)
+    available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "unknown")
     local current_qdisc
-    current_qdisc=$(sysctl -n net.core.default_qdisc)
+    current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "unknown")
     
     echo -e "\n\033[1;33mТекущая конфигурация:\033[0m"
     echo "----------------------------------------"
@@ -334,7 +378,7 @@ check_bbr_version() {
     
     if [[ "$current_cc" != "bbr3" ]]; then
         log_error "BBR3 не активирован!"
-        exit 1
+        return 1
     fi
 
     if [[ "$current_qdisc" != "fq_pie" ]]; then
@@ -342,6 +386,8 @@ check_bbr_version() {
     else
         log "✓ Конфигурация BBR3 активна"
     fi
+
+    return 0
 }
 
 # Создание сервиса автозапуска
