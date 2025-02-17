@@ -14,6 +14,77 @@ log_error() {
     echo -e "\033[1;31m[ОШИБКА] - $1\033[0m"
 }
 
+# Функция проверки наличия команды
+check_command() {
+    if ! command -v "$1" &> /dev/null; then
+        log_error "Команда '$1' не найдена"
+        return 1
+    fi
+    return 0
+}
+
+# Функция установки пакетов
+install_package() {
+    local package=$1
+    if [ -f /etc/debian_version ]; then
+        apt-get install -y "$package"
+    elif [ -f /etc/redhat-release ]; then
+        yum install -y "$package"
+    else
+        log_error "Неподдерживаемый дистрибутив"
+        return 1
+    fi
+}
+
+# Проверка и установка зависимостей
+check_dependencies() {
+    local dependencies=("sysctl" "modinfo" "ss" "awk" "column" "grep")
+    local missing_deps=()
+
+    log "Проверка зависимостей..."
+    
+    # Проверка sudo прав
+    if [ "$EUID" -ne 0 ]; then
+        log_error "Скрипт требует привилегий суперпользователя (sudo)"
+        exit 1
+    fi
+
+    for dep in "${dependencies[@]}"; do
+        if ! check_command "$dep"; then
+            case "$dep" in
+                "sysctl")
+                    missing_deps+=("procps")
+                    ;;
+                "ss")
+                    missing_deps+=("iproute2")
+                    ;;
+                "awk"|"grep")
+                    missing_deps+=("gawk" "grep")
+                    ;;
+                "column")
+                    missing_deps+=("util-linux")
+                    ;;
+                *)
+                    missing_deps+=("$dep")
+                    ;;
+            esac
+        fi
+    done
+
+    if [ ${#missing_deps[@]} -ne 0 ]; then
+        log "Установка отсутствующих зависимостей: ${missing_deps[*]}"
+        for package in "${missing_deps[@]}"; do
+            if ! install_package "$package"; then
+                log_error "Не удалось установить пакет: $package"
+                exit 1
+            fi
+        done
+        log "Все зависимости установлены"
+    else
+        log "✓ Все необходимые зависимости уже установлены"
+    fi
+}
+
 print_bbr_phase() {
     case "$1" in
         1) echo "STARTUP - начальная фаза разгона" ;;
@@ -26,6 +97,19 @@ print_bbr_phase() {
         *) echo "Неизвестная фаза" ;;
     esac
 }
+
+# Проверка зависимостей перед запуском основного скрипта
+check_dependencies
+
+# Проверка загрузки модуля BBR
+if ! lsmod | grep -q '^tcp_bbr'; then
+    log "Загрузка модуля BBR..."
+    modprobe tcp_bbr
+    if [ $? -ne 0 ]; then
+        log_error "Не удалось загрузить модуль tcp_bbr"
+        exit 1
+    fi
+fi
 
 log "Проверка конфигурации BBR..."
 
