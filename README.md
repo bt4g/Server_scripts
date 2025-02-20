@@ -1,4 +1,4 @@
-# Коллекция Серверных Скриптов
+# Xanmod Kernel Installer with BBR3
 
 ![Версия](https://img.shields.io/badge/версия-1.0.0-blue)
 ![Лицензия](https://img.shields.io/badge/лицензия-MIT-green)
