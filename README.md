@@ -26,7 +26,7 @@ wget -qO server_launcher.sh https://raw.githubusercontent.com/gopnikgame/Server_
 - ✅ Обновление системы
 - 📦 Установка базовых пакетов
 - 🔒 Настройка SSH с ключевой аутентификацией
-- 🛡️ Настройка UFW с блокировкой AS61280
+- 🛡️ Настройка UFW
 - 🌐 Оптимизация DNS (Google, Cloudflare, AdGuard)
 - ⚙️ Системная оптимизация
 
