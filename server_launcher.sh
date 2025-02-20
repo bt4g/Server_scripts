@@ -2,7 +2,7 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-20 10:27:02
+# Created: 2025-02-20 10:31:01
 # Current User: gopnikgame
 
 # Цветовые коды
@@ -91,52 +91,36 @@ check_dependencies() {
     fi
 }
 
-# Показать краткое меню для pipe
-show_pipe_menu() {
+# Показать справку
+show_help() {
     echo -e "${BLUE}=== Server Scripts Manager ===${NC}"
-    echo -e "${YELLOW}Доступные скрипты:${NC}"
-    echo "1. Установка XanMod Kernel с BBR3"
-    echo "2. Проверка конфигурации BBR"
+    echo -e "${YELLOW}Использование:${NC}"
+    echo "curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- [опция]"
     echo
-    echo -e "${YELLOW}Введите номер скрипта (1-2):${NC}"
-}
-
-# Очистка экрана и вывод полного меню
-show_menu() {
-    clear
-    echo -e "${BLUE}=== Server Scripts Manager ===${NC}"
-    echo -e "${YELLOW}Текущая дата: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
-    echo -e "${YELLOW}Пользователь: gopnikgame${NC}"
+    echo "Опции:"
+    echo "  -i, --install   Установка XanMod Kernel с BBR3"
+    echo "  -c, --check     Проверка конфигурации BBR"
+    echo "  -h, --help      Показать эту справку"
     echo
-
-    local i=1
-    for module in "${!MODULES[@]}"; do
-        echo -e "$i. ${MODULES[$module]}"
-        ((i++))
-    done
-    
-    echo -e "\n0. Выход"
+    echo "Примеры:"
+    echo "  Установка XanMod:"
+    echo "    curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- -i"
     echo
+    echo "  Проверка BBR:"
+    echo "    curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- -c"
 }
 
 # Запуск выбранного модуля
 run_module() {
-    local choice=$1
-    local i=1
-    for module in "${!MODULES[@]}"; do
-        if [ "$i" -eq "$choice" ]; then
-            if [ -f "$MODULES_DIR/$module" ]; then
-                log "INFO" "Запуск модуля: $module"
-                bash "$MODULES_DIR/$module"
-                return 0
-            else
-                log "ERROR" "Модуль $module не найден"
-                return 1
-            fi
-        fi
-        ((i++))
-    done
-    return 1
+    local module_name=$1
+    if [ -f "$MODULES_DIR/$module_name" ]; then
+        log "INFO" "Запуск модуля: $module_name"
+        bash "$MODULES_DIR/$module_name"
+        return 0
+    else
+        log "ERROR" "Модуль $module_name не найден"
+        return 1
+    fi
 }
 
 # Основная функция
@@ -152,44 +136,24 @@ main() {
         exit 1
     fi
 
-    # Определяем режим работы (pipe или интерактивный)
-    if [ ! -t 0 ]; then
-        # Режим pipe
-        show_pipe_menu
-        # Ждем ввод в течение 10 секунд
-        read -t 10 choice
-        case $choice in
-            1|2)
-                run_module "$choice"
-                ;;
-            *)
-                log "ERROR" "Неверный выбор или время ожидания истекло. Запуск установки XanMod по умолчанию."
-                run_module 1
-                ;;
-        esac
-        exit 0
-    fi
-
-    # Интерактивный режим
-    while true; do
-        show_menu
-        read -p "Выберите действие (0-${#MODULES[@]}): " choice
-        
-        case $choice in
-            0)
-                echo -e "\n${GREEN}До свидания!${NC}"
-                exit 0
-                ;;
-            [1-2])
-                run_module "$choice"
-                ;;
-            *)
-                log "ERROR" "Неверный выбор"
-                sleep 1
-                ;;
-        esac
-    done
+    # Обработка параметров
+    case "$1" in
+        -i|--install)
+            run_module "install_xanmod.sh"
+            ;;
+        -c|--check)
+            run_module "bbr_info.sh"
+            ;;
+        -h|--help|"")
+            show_help
+            ;;
+        *)
+            log "ERROR" "Неизвестный параметр: $1"
+            show_help
+            exit 1
+            ;;
+    esac
 }
 
-# Запуск основной функции
-main
+# Запуск основной функции с переданными параметрами
+main "$@"
