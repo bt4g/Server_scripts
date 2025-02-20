@@ -1,9 +1,20 @@
 #!/bin/bash
 
-# Version: 1.0.0
+# Version: 1.0.1
 # Author: gopnikgame
-CURRENT_DATE="2025-02-15 16:56:41"
+# Last Modified: 2025-02-20 11:16:02
+CURRENT_DATE="2025-02-20 11:16:02"
 CURRENT_USER="gopnikgame"
+
+# Цветовые коды
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Конфигурационный файл
+SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 
 # Функция логирования
 log() {
@@ -12,6 +23,10 @@ log() {
 
 log_error() {
     echo -e "\033[1;31m[ОШИБКА] - $1\033[0m"
+}
+
+log_success() {
+    echo -e "\033[1;32m[УСПЕХ] - $1\033[0m"
 }
 
 # Функция проверки наличия команды
@@ -36,146 +51,171 @@ install_package() {
     fi
 }
 
-# Проверка и установка зависимостей
-check_dependencies() {
-    local dependencies=("sysctl" "modinfo" "ss" "awk" "column" "grep")
-    local missing_deps=()
-
-    log "Проверка зависимостей..."
-    
-    # Проверка sudo прав
-    if [ "$EUID" -ne 0 ]; then
-        log_error "Скрипт требует привилегий суперпользователя (sudo)"
-        exit 1
-    fi
-
-    for dep in "${dependencies[@]}"; do
-        if ! check_command "$dep"; then
-            case "$dep" in
-                "sysctl")
-                    missing_deps+=("procps")
-                    ;;
-                "ss")
-                    missing_deps+=("iproute2")
-                    ;;
-                "awk"|"grep")
-                    missing_deps+=("gawk" "grep")
-                    ;;
-                "column")
-                    missing_deps+=("util-linux")
-                    ;;
-                *)
-                    missing_deps+=("$dep")
-                    ;;
-            esac
+# Функция проверки и загрузки модуля BBR
+check_and_load_bbr() {
+    if ! lsmod | grep -q "^tcp_bbr "; then
+        log "Загрузка модуля tcp_bbr..."
+        modprobe tcp_bbr
+        if [ $? -ne 0 ]; then
+            log_error "Ошибка загрузки модуля tcp_bbr"
+            return 1
         fi
-    done
-
-    if [ ${#missing_deps[@]} -ne 0 ]; then
-        log "Установка отсутствующих зависимостей: ${missing_deps[*]}"
-        for package in "${missing_deps[@]}"; do
-            if ! install_package "$package"; then
-                log_error "Не удалось установить пакет: $package"
-                exit 1
-            fi
-        done
-        log "Все зависимости установлены"
-    else
-        log "✓ Все необходимые зависимости уже установлены"
     fi
+    return 0
 }
 
-print_bbr_phase() {
-    case "$1" in
-        1) echo "STARTUP - начальная фаза разгона" ;;
-        2) echo "DRAIN - дренаж очереди" ;;
-        3) echo "PROBE_RTT - измерение минимального RTT" ;;
-        4) echo "PROBE_BW_UP - увеличение пропускной способности" ;;
-        5) echo "PROBE_BW_DOWN - уменьшение пропускной способности" ;;
-        6) echo "PROBE_BW_CRUISE - круизный режим" ;;
-        7) echo "PROBE_BW_REFILL - наполнение" ;;
-        *) echo "Неизвестная фаза" ;;
-    esac
+# Функция применения оптимизированных настроек
+apply_optimized_settings() {
+    log "Применение оптимизированных настроек сети..."
+    
+    cat > "$SYSCTL_CONFIG" <<EOF
+# BBR3 core settings
+net.core.default_qdisc=fq_pie
+net.ipv4.tcp_congestion_control=bbr
+
+# TCP optimizations for XanMod
+net.ipv4.tcp_ecn=1
+net.ipv4.tcp_timestamps=1
+net.ipv4.tcp_sack=1
+net.ipv4.tcp_low_latency=1
+
+# Buffer settings optimized for 10Gbit+ networks
+net.core.rmem_max=67108864
+net.core.wmem_max=67108864
+net.core.rmem_default=1048576
+net.core.wmem_default=1048576
+net.core.optmem_max=65536
+net.ipv4.tcp_rmem=4096 1048576 67108864
+net.ipv4.tcp_wmem=4096 1048576 67108864
+
+# BBR3 specific optimizations
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_window_scaling=1
+net.ipv4.tcp_notsent_lowat=131072
+net.core.netdev_max_backlog=16384
+net.core.somaxconn=8192
+net.ipv4.tcp_max_syn_backlog=8192
+net.ipv4.tcp_max_tw_buckets=2000000
+net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_fin_timeout=10
+net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.tcp_keepalive_time=60
+net.ipv4.tcp_keepalive_intvl=10
+net.ipv4.tcp_keepalive_probes=6
+net.ipv4.tcp_mtu_probing=1
+net.ipv4.tcp_syncookies=1
+
+# Additional XanMod optimizations
+net.core.busy_read=50
+net.core.busy_poll=50
+net.ipv4.tcp_max_orphans=16384
+EOF
+
+    # Применение настроек
+    if ! sysctl -p "$SYSCTL_CONFIG"; then
+        log_error "Ошибка применения настроек sysctl"
+        return 1
+    fi
+    
+    log_success "Сетевые настройки успешно применены"
+    return 0
 }
 
-# Проверка зависимостей перед запуском основного скрипта
-check_dependencies
+# Функция обновления параметров GRUB
+update_grub_settings() {
+    log "Обновление параметров загрузки GRUB..."
+    
+    # Создание резервной копии
+    if [ ! -f /etc/default/grub.backup ]; then
+        cp /etc/default/grub /etc/default/grub.backup
+    fi
+    
+    # Добавление параметров BBR если они отсутствуют
+    if ! grep -q "tcp_congestion_control=bbr" /etc/default/grub; then
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="tcp_congestion_control=bbr /' /etc/default/grub
+        if ! update-grub; then
+            log_error "Ошибка при обновлении GRUB"
+            return 1
+        fi
+        log_success "Параметры GRUB обновлены"
+    fi
+    return 0
+}
 
-# Проверка загрузки модуля BBR
-if ! lsmod | grep -q '^tcp_bbr'; then
-    log "Загрузка модуля BBR..."
-    modprobe tcp_bbr
-    if [ $? -ne 0 ]; then
-        log_error "Не удалось загрузить модуль tcp_bbr"
+# Функция проверки и исправления конфигурации
+check_and_fix_configuration() {
+    local needs_fix=0
+    local current_cc
+    local current_qdisc
+    local bbr_version
+    
+    current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
+    current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "unknown")
+    bbr_version=$(modinfo tcp_bbr 2>/dev/null | grep "^version:" | awk '{print $2}' || echo "unknown")
+    
+    echo -e "\n${YELLOW}Проверка текущей конфигурации:${NC}"
+    echo "----------------------------------------"
+    echo -e "Алгоритм управления:    ${BLUE}$current_cc${NC}"
+    echo -e "Планировщик очереди:    ${BLUE}$current_qdisc${NC}"
+    echo -e "Версия BBR:             ${BLUE}$bbr_version${NC}"
+    echo -e "ECN статус:             ${BLUE}$(sysctl -n net.ipv4.tcp_ecn)${NC}"
+    echo "----------------------------------------"
+    
+    if [[ "$current_cc" != "bbr" || "$current_qdisc" != "fq_pie" ]]; then
+        needs_fix=1
+    fi
+    
+    if [[ "$bbr_version" != "3" ]]; then
+        if ! uname -r | grep -q "xanmod"; then
+            log_error "Ядро XanMod не установлено. Сначала установите ядро XanMod"
+            return 1
+        fi
+    fi
+    
+    if [ $needs_fix -eq 1 ]; then
+        echo -e "\n${YELLOW}Обнаружены проблемы в конфигурации. Хотите исправить? [y/N]${NC}"
+        read -r answer
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            if ! check_and_load_bbr; then
+                return 1
+            fi
+            if ! apply_optimized_settings; then
+                return 1
+            fi
+            if ! update_grub_settings; then
+                return 1
+            fi
+            log_success "Конфигурация исправлена. Рекомендуется перезагрузить систему"
+            echo -e "\n${YELLOW}Хотите перезагрузить систему сейчас? [y/N]${NC}"
+            read -r reboot_answer
+            if [[ "$reboot_answer" =~ ^[Yy]$ ]]; then
+                reboot
+            fi
+        fi
+    else
+        log_success "Конфигурация BBR3 в порядке"
+    fi
+    
+    return 0
+}
+
+# Главная функция
+main() {
+    # Проверка root прав
+    if [ "$EUID" -ne 0 ]; then
+        log_error "Этот скрипт должен быть запущен с правами root"
         exit 1
     fi
-fi
-
-log "Проверка конфигурации BBR..."
-
-# Проверка текущего алгоритма
-current_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
-log "Текущий алгоритм управления перегрузкой: $current_cc"
-
-# Проверка версии модуля BBR
-bbr_version=$(modinfo tcp_bbr | grep "^version:" | awk '{print $2}')
-if [[ "$bbr_version" == "3" ]]; then
-    log "✓ Используется BBRv3 (версия модуля: $bbr_version)"
-else
-    log_error "Неожиданная версия BBR: $bbr_version (ожидается 3)"
-fi
-
-# Проверка доступных алгоритмов
-available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control)
-log "Доступные алгоритмы: $available_cc"
-
-# Проверка планировщика очереди
-qdisc=$(sysctl -n net.core.default_qdisc)
-log "Текущий планировщик очереди: $qdisc"
-if [[ "$qdisc" == "fq_pie" ]]; then
-    log "✓ Используется оптимальный планировщик очереди для BBR3 (fq_pie)"
-else
-    log_error "Неоптимальный планировщик очереди: $qdisc (рекомендуется fq_pie для BBR3)"
-fi
-
-# Вывод текущих сетевых настроек
-echo -e "\n\033[1;33mТекущие сетевые настройки:\033[0m"
-echo "----------------------------------------"
-{
-    echo "Размеры буферов:"
-    sysctl -n net.core.rmem_max
-    sysctl -n net.core.wmem_max
-    sysctl -n net.core.rmem_default
-    sysctl -n net.core.wmem_default
-    echo "TCP настройки:"
-    sysctl -n net.ipv4.tcp_rmem
-    sysctl -n net.ipv4.tcp_wmem
-    sysctl -n net.ipv4.tcp_fastopen
-    sysctl -n net.ipv4.tcp_ecn
-} | column -t
-
-echo -e "\n\033[1;33mСтатистика BBR для активных соединений:\033[0m"
-echo "----------------------------------------"
-ss -iti | grep -i bbr | while read -r line; do
-    phase=$(echo "$line" | awk '{print $8}')
-    echo -e "Фаза BBR: $(print_bbr_phase "$phase")"
-    echo "$line"
-done
-
-# Проверка ECN
-ecn_status=$(sysctl -n net.ipv4.tcp_ecn)
-log "Статус ECN: $([[ "$ecn_status" == "1" ]] && echo "включен" || echo "выключен")"
-
-# Итоговая проверка
-if [[ "$current_cc" == "bbr" && "$bbr_version" == "3" && "$qdisc" == "fq_pie" ]]; then
-    log "✓ BBR3 активен и правильно настроен"
     
-    echo -e "\n\033[1;32mСистема оптимально настроена для BBR3\033[0m"
-else
-    log_error "BBR3 настроен некорректно"
+    echo -e "${BLUE}=== Проверка и настройка BBR3 ===${NC}"
+    echo -e "Версия: 1.0.1"
+    echo -e "Дата запуска: $CURRENT_DATE"
+    echo -e "Пользователь: $CURRENT_USER\n"
     
-    echo -e "\n\033[1;33mРекомендации по исправлению:\033[0m"
-    [[ "$current_cc" != "bbr" ]] && echo "- Установите 'net.ipv4.tcp_congestion_control=bbr'"
-    [[ "$qdisc" != "fq_pie" ]] && echo "- Установите 'net.core.default_qdisc=fq_pie'"
-    [[ "$ecn_status" != "1" ]] && echo "- Включите ECN: 'net.ipv4.tcp_ecn=1'"
-fi
+    check_and_fix_configuration
+    
+    exit $?
+}
+
+# Запуск скрипта
+main "$@"
