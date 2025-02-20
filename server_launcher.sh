@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Version: 1.0.1
+# Version: 1.0.2
 # Author: gopnikgame
 # Created: 2025-02-20 10:31:01
-# Last Modified: 2025-02-20 11:26:21
+# Last Modified: 2025-02-20 17:23:53
 # Current User: gopnikgame
 
 # Цветовые коды
@@ -17,10 +17,11 @@ NC='\033[0m'
 MODULES_DIR="/usr/local/server-scripts/modules"
 LOG_DIR="/var/log/server-scripts"
 GITHUB_RAW="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
-SCRIPT_VERSION="1.0.1"
+SCRIPT_VERSION="1.0.2"
 
 # Массив модулей с версиями
 declare -A MODULES=(
+    ["ubuntu_pre_install.sh"]="Первоначальная настройка Ubuntu 24.04"
     ["install_xanmod.sh"]="Установка XanMod Kernel с BBR3"
     ["bbr_info.sh"]="Проверка и настройка конфигурации BBR"
 )
@@ -46,7 +47,6 @@ check_and_download_modules() {
     local force_update=${1:-false}
     
     for module in "${!MODULES[@]}"; do
-        # Всегда обновляем bbr_info.sh из-за новых изменений
         if [ "$module" = "bbr_info.sh" ] || [ ! -f "$MODULES_DIR/$module" ] || [ "$force_update" = true ]; then
             log "INFO" "Загрузка/обновление модуля: $module..."
             if wget -q "$GITHUB_RAW/$module" -O "$MODULES_DIR/$module.tmp"; then
@@ -104,12 +104,16 @@ show_help() {
     echo "curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- [опция]"
     echo
     echo "Опции:"
-    echo "  -i, --install   Установка XanMod Kernel с BBR3"
-    echo "  -c, --check     Проверка и настройка конфигурации BBR"
-    echo "  -u, --update    Обновить все модули"
-    echo "  -h, --help      Показать эту справку"
+    echo "  -p, --preinstall Первоначальная настройка Ubuntu 24.04"
+    echo "  -i, --install    Установка XanMod Kernel с BBR3"
+    echo "  -c, --check      Проверка и настройка конфигурации BBR"
+    echo "  -u, --update     Обновить все модули"
+    echo "  -h, --help       Показать эту справку"
     echo
     echo "Примеры:"
+    echo "  Первоначальная настройка Ubuntu:"
+    echo "    curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- -p"
+    echo
     echo "  Установка XanMod:"
     echo "    curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- -i"
     echo
@@ -139,6 +143,13 @@ main() {
     
     # Обработка параметров
     case "$1" in
+        -p|--preinstall)
+            if ! check_and_download_modules; then
+                log "ERROR" "${RED}Не удалось загрузить все необходимые модули${NC}"
+                exit 1
+            fi
+            run_module "ubuntu_pre_install.sh"
+            ;;
         -i|--install)
             if ! check_and_download_modules; then
                 log "ERROR" "${RED}Не удалось загрузить все необходимые модули${NC}"
