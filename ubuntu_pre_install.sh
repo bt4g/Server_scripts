@@ -2,7 +2,7 @@
 set -e
 
 # Метаданные скрипта
-SCRIPT_VERSION="1.0.4"
+SCRIPT_VERSION="1.0.5"
 SCRIPT_DATE="2025-02-20 18:21:09"
 SCRIPT_AUTHOR="gopnikgame"
 
@@ -37,6 +37,7 @@ rollback() {
     log "ERROR" "Произошла ошибка. Выполняется откат изменений..."
     if [ -f "$BACKUP_DIR/resolved.conf" ]; then
         cp "$BACKUP_DIR/resolved.conf" /etc/systemd/resolved.conf || true
+        systemctl unmask systemd-resolved || true
         systemctl restart systemd-resolved || true
     fi
     exit 1
@@ -88,6 +89,16 @@ apt dist-upgrade -y
 
 # Настройка DNS через systemd-resolved
 log "INFO" "Настройка DNS через systemd-resolved..."
+
+# Проверка состояния systemd-resolved
+if systemctl is-enabled systemd-resolved >/dev/null 2>&1; then
+    log "INFO" "systemd-resolved уже включен."
+else
+    log "INFO" "Размаскировка и включение systemd-resolved..."
+    systemctl unmask systemd-resolved || true
+    systemctl enable systemd-resolved || true
+fi
+
 cat > /etc/systemd/resolved.conf << EOF
 [Resolve]
 # Основной DNS: Google DoH
@@ -106,8 +117,6 @@ EOF
 # Убедитесь, что resolv.conf является символической ссылкой
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
-systemctl unmask systemd-resolved
-systemctl enable systemd-resolved
 systemctl restart systemd-resolved
 
 # Настройка файрволла
