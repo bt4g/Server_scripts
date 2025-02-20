@@ -2,7 +2,7 @@
 set -e
 
 # Метаданные скрипта
-SCRIPT_VERSION="1.0.7"
+SCRIPT_VERSION="1.0.10"
 SCRIPT_DATE="2025-02-20 18:21:09"
 SCRIPT_AUTHOR="gopnikgame"
 
@@ -81,11 +81,19 @@ log "INFO" "Создание резервных копий конфигурац�
 mkdir -p "$BACKUP_DIR"
 backup_file "/etc/systemd/resolved.conf"
 
-# Обновление системы
+# Обновление системы и установка необходимых пакетов
 log "INFO" "Обновление списка пакетов и системы..."
 apt update
 apt upgrade -y
 apt dist-upgrade -y
+
+log "INFO" "Установка базовых пакетов..."
+apt install -y \
+    curl wget git htop neofetch mc \
+    net-tools nmap tcpdump iotop \
+    unzip tar vim tmux screen \
+    rsync ncdu dnsutils resolvconf \
+    whois ufw
 
 # Настройка DNS через systemd-resolved
 log "INFO" "Настройка DNS через systemd-resolved..."
@@ -121,6 +129,21 @@ systemctl restart systemd-resolved
 
 # Настройка файрволла
 log "INFO" "Настройка UFW..."
+
+# Блокировка IP-адресов из AS61280 (IPv4 и IPv6)
+log "INFO" "Получение списка IP-адресов для блокировки (AS61280)..."
+blocked_ips=$(whois -h whois.radb.net -- '-i origin AS61280' | grep -E '^route|^route6' | awk '{print $2}')
+if [ -z "$blocked_ips" ]; then
+    log "WARNING" "Не удалось получить IP-адреса для блокировки."
+else
+    log "INFO" "Блокировка IP-адресов из AS61280..."
+    for ip in $blocked_ips; do
+        ufw deny from "$ip" to any
+        log "INFO" "Заблокирован IP-адрес: $ip"
+    done
+fi
+
+# Основные правила UFW
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh
@@ -193,17 +216,6 @@ update_ssh_config "LoginGraceTime" "30"
 # Перезапуск службы SSH
 systemctl restart ssh
 log "INFO" "Служба SSH перезапущена. Парольная аутентификация отключена."
-
-# Настройка fail2ban
-log "INFO" "Настройка fail2ban..."
-if [ -f "/etc/fail2ban/jail.conf" ]; then
-    cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
-else
-    log "WARNING" "Файл jail.conf не найден. Настройка fail2ban пропущена."
-fi
-
-systemctl enable fail2ban
-systemctl start fail2ban
 
 # Финальная информация
 log "INFO" "=== Установка завершена ==="
