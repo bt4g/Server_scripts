@@ -2,7 +2,7 @@
 set -e
 
 # Метаданные скрипта
-SCRIPT_VERSION="1.0.5"
+SCRIPT_VERSION="1.0.6"
 SCRIPT_DATE="2025-02-20 18:21:09"
 SCRIPT_AUTHOR="gopnikgame"
 
@@ -140,6 +140,13 @@ update_ssh_config() {
 }
 
 log "INFO" "Настройка безопасности SSH..."
+
+# Проверка наличия службы SSH
+if ! systemctl is-active --quiet ssh; then
+    log "INFO" "Служба SSH не найдена. Установка OpenSSH..."
+    apt install -y openssh-server
+fi
+
 cp /etc/ssh/sshd_config "$BACKUP_DIR/"
 update_ssh_config "PermitRootLogin" "prohibit-password"
 update_ssh_config "PasswordAuthentication" "no"
@@ -150,7 +157,8 @@ update_ssh_config "AllowAgentForwarding" "no"
 update_ssh_config "AllowTcpForwarding" "no"
 update_ssh_config "LoginGraceTime" "30"
 
-systemctl restart sshd
+# Перезапуск службы SSH
+systemctl restart ssh
 
 # Настройка fail2ban
 log "INFO" "Настройка fail2ban..."
