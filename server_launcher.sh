@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Version: 1.0.2
+# Version: 1.0.3
 # Author: gopnikgame
 # Created: 2025-02-20 10:31:01
-# Last Modified: 2025-02-20 17:23:53
+# Last Modified: 2025-02-20 17:40:36
 # Current User: gopnikgame
 
 # Цветовые коды
@@ -14,10 +14,12 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Константы
+SCRIPT_DIR="/root/server-scripts"
 MODULES_DIR="/usr/local/server-scripts/modules"
 LOG_DIR="/var/log/server-scripts"
 GITHUB_RAW="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
-SCRIPT_VERSION="1.0.2"
+SCRIPT_VERSION="1.0.3"
+SCRIPT_NAME="server_launcher.sh"
 
 # Массив модулей с версиями
 declare -A MODULES=(
@@ -35,8 +37,10 @@ log() {
 
 # Создание необходимых директорий
 create_directories() {
+    mkdir -p "$SCRIPT_DIR"
     mkdir -p "$MODULES_DIR"
     mkdir -p "$LOG_DIR"
+    chmod 755 "$SCRIPT_DIR"
     chmod 755 "$MODULES_DIR"
     chmod 755 "$LOG_DIR"
 }
@@ -46,16 +50,17 @@ check_and_download_modules() {
     local missing_modules=0
     local force_update=${1:-false}
     
+    echo -e "${YELLOW}Проверка и загрузка модулей...${NC}"
     for module in "${!MODULES[@]}"; do
-        if [ "$module" = "bbr_info.sh" ] || [ ! -f "$MODULES_DIR/$module" ] || [ "$force_update" = true ]; then
-            log "INFO" "Загрузка/обновление модуля: $module..."
+        if [ ! -f "$MODULES_DIR/$module" ] || [ "$force_update" = true ]; then
+            echo -ne "${BLUE}Загрузка модуля ${module}... ${NC}"
             if wget -q "$GITHUB_RAW/$module" -O "$MODULES_DIR/$module.tmp"; then
                 mv "$MODULES_DIR/$module.tmp" "$MODULES_DIR/$module"
                 chmod +x "$MODULES_DIR/$module"
-                log "SUCCESS" "Модуль $module успешно обновлен"
+                echo -e "${GREEN}[OK]${NC}"
             else
                 rm -f "$MODULES_DIR/$module.tmp"
-                log "ERROR" "Ошибка загрузки модуля $module"
+                echo -e "${RED}[ОШИБКА]${NC}"
                 ((missing_modules++))
             fi
         fi
@@ -67,7 +72,7 @@ check_and_download_modules() {
 # Проверка root прав
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        log "ERROR" "${RED}Этот скрипт должен быть запущен с правами root${NC}"
+        echo -e "${RED}Этот скрипт должен быть запущен с правами root${NC}"
         exit 1
     fi
 }
@@ -84,54 +89,125 @@ check_dependencies() {
     done
 
     if [ ${#missing_deps[@]} -ne 0 ]; then
-        log "INFO" "Установка необходимых зависимостей: ${missing_deps[*]}"
+        echo -e "${YELLOW}Установка необходимых зависимостей: ${missing_deps[*]}${NC}"
         if [ -f /etc/debian_version ]; then
             apt-get update -qq
             apt-get install -y "${missing_deps[@]}" procps
         elif [ -f /etc/redhat-release ]; then
             yum install -y "${missing_deps[@]}" procps-ng
         else
-            log "ERROR" "Неподдерживаемый дистрибутив"
+            echo -e "${RED}Неподдерживаемый дистрибутив${NC}"
             exit 1
         fi
     fi
 }
 
-# Показать справку
-show_help() {
+# Функция самообновления
+self_update() {
+    echo -e "${YELLOW}Проверка обновлений...${NC}"
+    
+    # Загрузка новой версии
+    if wget -q "$GITHUB_RAW/$SCRIPT_NAME" -O "/tmp/$SCRIPT_NAME.tmp"; then
+        # Сравнение версий
+        local new_version=$(grep "# Version:" "/tmp/$SCRIPT_NAME.tmp" | awk '{print $3}')
+        if [ "$new_version" != "$SCRIPT_VERSION" ]; then
+            echo -e "${GREEN}Доступна новая версия ($new_version)! Обновление...${NC}"
+            mv "/tmp/$SCRIPT_NAME.tmp" "$SCRIPT_DIR/$SCRIPT_NAME"
+            chmod +x "$SCRIPT_DIR/$SCRIPT_NAME"
+            echo -e "${GREEN}Скрипт успешно обновлен до версии $new_version${NC}"
+            # Перезапуск скрипта
+            exec "$SCRIPT_DIR/$SCRIPT_NAME"
+        else
+            echo -e "${GREEN}У вас установлена последняя версия${NC}"
+            rm -f "/tmp/$SCRIPT_NAME.tmp"
+        fi
+    else
+        echo -e "${RED}Ошибка проверки обновлений${NC}"
+    fi
+}
+
+# Показать главное меню
+show_main_menu() {
+    clear
     echo -e "${BLUE}=== Server Scripts Manager v${SCRIPT_VERSION} ===${NC}"
-    echo -e "${YELLOW}Использование:${NC}"
-    echo "curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- [опция]"
+    echo -e "${YELLOW}Выберите действие:${NC}"
     echo
-    echo "Опции:"
-    echo "  -p, --preinstall Первоначальная настройка Ubuntu 24.04"
-    echo "  -i, --install    Установка XanMod Kernel с BBR3"
-    echo "  -c, --check      Проверка и настройка конфигурации BBR"
-    echo "  -u, --update     Обновить все модули"
-    echo "  -h, --help       Показать эту справку"
+    local i=1
+    
+    # Вывод доступных модулей
+    for module in "${!MODULES[@]}"; do
+        echo -e "$i) ${GREEN}${MODULES[$module]}${NC}"
+        ((i++))
+    done
+    
+    # Системные опции
+    echo -e "$i) ${YELLOW}Обновить все модули${NC}"
+    ((i++))
+    echo -e "$i) ${YELLOW}Обновить launcher${NC}"
+    ((i++))
+    echo -e "0) ${RED}Выход${NC}"
     echo
-    echo "Примеры:"
-    echo "  Первоначальная настройка Ubuntu:"
-    echo "    curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- -p"
+    
+    read -p "Выберите опцию [0-$((i-1))]: " choice
+    
+    case $choice in
+        0)
+            echo -e "${YELLOW}До свидания!${NC}"
+            exit 0
+            ;;
+        $((i-1)))
+            self_update
+            ;;
+        $((i-2)))
+            check_and_download_modules true
+            ;;
+        *)
+            if [ $choice -gt 0 ] && [ $choice -lt $((i-2)) ]; then
+                local module_name=(${!MODULES[@]})
+                run_module "${module_name[$((choice-1))]}"
+            else
+                echo -e "${RED}Неверный выбор${NC}"
+            fi
+            ;;
+    esac
+    
+    # Пауза перед возвратом в меню
     echo
-    echo "  Установка XanMod:"
-    echo "    curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- -i"
-    echo
-    echo "  Проверка и настройка BBR:"
-    echo "    curl -sSL https://raw.githubusercontent.com/gopnikgame/Server_scripts/main/server_launcher.sh | sudo bash -s -- -c"
+    read -p "Нажмите Enter для продолжения..."
+    show_main_menu
 }
 
 # Запуск выбранного модуля
 run_module() {
     local module_name=$1
     if [ -f "$MODULES_DIR/$module_name" ]; then
-        log "INFO" "Запуск модуля: $module_name"
+        echo -e "${YELLOW}Запуск модуля: $module_name${NC}"
         bash "$MODULES_DIR/$module_name"
         return $?
     else
-        log "ERROR" "Модуль $module_name не найден"
+        echo -e "${RED}Модуль $module_name не найден${NC}"
         return 1
     fi
+}
+
+# Установка скрипта
+install_script() {
+    # Создание директорий
+    create_directories
+    
+    # Копирование скрипта
+    if [ ! -f "$SCRIPT_DIR/$SCRIPT_NAME" ]; then
+        cp "$0" "$SCRIPT_DIR/$SCRIPT_NAME"
+        chmod +x "$SCRIPT_DIR/$SCRIPT_NAME"
+    fi
+    
+    # Создание символической ссылки
+    if [ ! -L "/usr/local/bin/$SCRIPT_NAME" ]; then
+        ln -s "$SCRIPT_DIR/$SCRIPT_NAME" "/usr/local/bin/$SCRIPT_NAME"
+    fi
+    
+    # Загрузка модулей
+    check_and_download_modules
 }
 
 # Основная функция
@@ -139,48 +215,16 @@ main() {
     # Проверки
     check_root
     check_dependencies
-    create_directories
     
-    # Обработка параметров
-    case "$1" in
-        -p|--preinstall)
-            if ! check_and_download_modules; then
-                log "ERROR" "${RED}Не удалось загрузить все необходимые модули${NC}"
-                exit 1
-            fi
-            run_module "ubuntu_pre_install.sh"
-            ;;
-        -i|--install)
-            if ! check_and_download_modules; then
-                log "ERROR" "${RED}Не удалось загрузить все необходимые модули${NC}"
-                exit 1
-            fi
-            run_module "install_xanmod.sh"
-            ;;
-        -c|--check)
-            if ! check_and_download_modules; then
-                log "ERROR" "${RED}Не удалось загрузить все необходимые модули${NC}"
-                exit 1
-            fi
-            run_module "bbr_info.sh"
-            ;;
-        -u|--update)
-            if ! check_and_download_modules true; then
-                log "ERROR" "${RED}Не удалось обновить все модули${NC}"
-                exit 1
-            fi
-            log "SUCCESS" "Все модули успешно обновлены"
-            ;;
-        -h|--help|"")
-            show_help
-            ;;
-        *)
-            log "ERROR" "Неизвестный параметр: $1"
-            show_help
-            exit 1
-            ;;
-    esac
+    # Если скрипт запущен напрямую из curl
+    if [ ! -f "$SCRIPT_DIR/$SCRIPT_NAME" ]; then
+        echo -e "${YELLOW}Первый запуск - установка скрипта...${NC}"
+        install_script
+    fi
+    
+    # Показ меню
+    show_main_menu
 }
 
-# Запуск основной функции с переданными параметрами
+# Запуск основной функции
 main "$@"
