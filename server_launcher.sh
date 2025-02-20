@@ -2,8 +2,8 @@
 
 # Version: 1.0.3
 # Author: gopnikgame
-# Created: 2025-02-20 18:13:30
-# Last Modified: 2025-02-20 18:13:30
+# Created: 2025-02-20 18:16:21
+# Last Modified: 2025-02-20 18:16:21
 # Current User: gopnikgame
 
 # Цветовые коды
@@ -23,7 +23,8 @@ SCRIPT_VERSION="1.0.3"
 SCRIPT_NAME="server_launcher.sh"
 
 # Массив модулей с версиями
-declare -A MODULES=(
+declare -A MODULES
+MODULES=(
     ["ubuntu_pre_install.sh"]="Первоначальная настройка Ubuntu 24.04"
     ["install_xanmod.sh"]="Установка XanMod Kernel с BBR3"
     ["bbr_info.sh"]="Проверка и настройка конфигурации BBR"
@@ -135,6 +136,28 @@ check_dependencies() {
     fi
 }
 
+# Функция самообновления
+self_update() {
+    print_header "ОБНОВЛЕНИЕ LAUNCHER"
+    print_step "Проверка обновлений..."
+    
+    if wget -q "$GITHUB_RAW/$SCRIPT_NAME" -O "/tmp/$SCRIPT_NAME.tmp"; then
+        local new_version=$(grep "# Version:" "/tmp/$SCRIPT_NAME.tmp" | awk '{print $3}')
+        if [ "$new_version" != "$SCRIPT_VERSION" ]; then
+            print_success "Доступна новая версия ($new_version)!"
+            mv "/tmp/$SCRIPT_NAME.tmp" "$SCRIPT_DIR/$SCRIPT_NAME"
+            chmod +x "$SCRIPT_DIR/$SCRIPT_NAME"
+            print_success "Скрипт обновлен до версии $new_version"
+            exec "$SCRIPT_DIR/$SCRIPT_NAME"
+        else
+            print_success "У вас установлена последняя версия"
+            rm -f "/tmp/$SCRIPT_NAME.tmp"
+        fi
+    else
+        print_error "Ошибка проверки обновлений"
+    fi
+}
+
 # Показать главное меню
 show_main_menu() {
     while true; do
@@ -159,7 +182,7 @@ show_main_menu() {
         
         read -p "Выберите опцию [0-$((i-1))]: " choice
         echo
-        
+
         case $choice in
             0)
                 print_success "До свидания!"
@@ -196,28 +219,6 @@ run_module() {
     else
         print_error "Модуль $module_name не найден"
         return 1
-    fi
-}
-
-# Функция самообновления
-self_update() {
-    print_header "ОБНОВЛЕНИЕ LAUNCHER"
-    print_step "Проверка обновлений..."
-    
-    if wget -q "$GITHUB_RAW/$SCRIPT_NAME" -O "/tmp/$SCRIPT_NAME.tmp"; then
-        local new_version=$(grep "# Version:" "/tmp/$SCRIPT_NAME.tmp" | awk '{print $3}')
-        if [ "$new_version" != "$SCRIPT_VERSION" ]; then
-            print_success "Доступна новая версия ($new_version)!"
-            mv "/tmp/$SCRIPT_NAME.tmp" "$SCRIPT_DIR/$SCRIPT_NAME"
-            chmod +x "$SCRIPT_DIR/$SCRIPT_NAME"
-            print_success "Скрипт обновлен до версии $new_version"
-            exec "$SCRIPT_DIR/$SCRIPT_NAME"
-        else
-            print_success "У вас установлена последняя версия"
-            rm -f "/tmp/$SCRIPT_NAME.tmp"
-        fi
-    else
-        print_error "Ошибка проверки обновлений"
     fi
 }
 
