@@ -2,44 +2,72 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-20 10:13:16
-# Description: Launcher for Server Scripts Collection
-
-# Константы
-REPO_URL="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
-CURRENT_DATE="2025-02-20 10:13:16"
-CURRENT_USER="gopnikgame"
-TEMP_DIR="/tmp/server_scripts"
-VERSION="1.0.0"
+# Created: 2025-02-20 10:20:40
 
 # Цветовые коды
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Константы
+MODULES_DIR="/usr/local/server-scripts/modules"
+LOG_DIR="/var/log/server-scripts"
+GITHUB_RAW="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
+
+# Массив модулей
+declare -A MODULES=(
+    ["install_xanmod.sh"]="Установка XanMod Kernel с BBR3"
+    ["bbr_info.sh"]="Проверка конфигурации BBR"
+)
 
 # Функция логирования
 log() {
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} - $1"
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    echo -e "${timestamp} [$1] $2"
+    echo -e "${timestamp} [$1] $2" >> "$LOG_DIR/server-scripts.log"
 }
 
-# Функция вывода ошибок
-log_error() {
-    echo -e "${RED}[ОШИБКА] - $1${NC}"
+# Создание необходимых директорий
+create_directories() {
+    mkdir -p "$MODULES_DIR"
+    mkdir -p "$LOG_DIR"
+    chmod 755 "$MODULES_DIR"
+    chmod 755 "$LOG_DIR"
 }
 
-# Функция проверки root прав
+# Проверка и загрузка модулей
+check_and_download_modules() {
+    local missing_modules=0
+    
+    for module in "${!MODULES[@]}"; do
+        if [ ! -f "$MODULES_DIR/$module" ]; then
+            log "INFO" "Загрузка модуля: $module..."
+            if wget -q "$GITHUB_RAW/$module" -O "$MODULES_DIR/$module"; then
+                chmod +x "$MODULES_DIR/$module"
+                log "SUCCESS" "Модуль $module успешно загружен"
+            else
+                log "ERROR" "Ошибка загрузки модуля $module"
+                ((missing_modules++))
+            fi
+        fi
+    done
+    
+    return $missing_modules
+}
+
+# Проверка root прав
 check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        log_error "Этот скрипт должен быть запущен с правами root"
+    if [ "$EUID" -ne 0 ]; then
+        log "ERROR" "${RED}Этот скрипт должен быть запущен с правами root${NC}"
         exit 1
     fi
 }
 
-# Функция проверки зависимостей
+# Проверка зависимостей
 check_dependencies() {
-    local deps=("curl" "wget")
+    local deps=("wget" "curl")
     local missing_deps=()
 
     for dep in "${deps[@]}"; do
@@ -49,135 +77,92 @@ check_dependencies() {
     done
 
     if [ ${#missing_deps[@]} -ne 0 ]; then
-        log "Установка необходимых зависимостей..."
+        log "INFO" "Установка необходимых зависимостей: ${missing_deps[*]}"
         if [ -f /etc/debian_version ]; then
             apt-get update -qq
             apt-get install -y "${missing_deps[@]}"
         elif [ -f /etc/redhat-release ]; then
             yum install -y "${missing_deps[@]}"
         else
-            log_error "Неподдерживаемый дистрибутив"
+            log "ERROR" "Неподдерживаемый дистрибутив"
             exit 1
         fi
     fi
 }
 
-# Функция очистки
-cleanup() {
-    if [ -d "$TEMP_DIR" ]; then
-        log "Очистка временных файлов..."
-        rm -rf "$TEMP_DIR"
-    fi
-}
-
-# Функция загрузки скрипта
-download_script() {
-    local script_name=$1
-    local target_dir=$2
-    
-    mkdir -p "$target_dir"
-    
-    log "Загрузка скрипта $script_name..."
-    if ! curl -sSL "$REPO_URL/$script_name" -o "$target_dir/$script_name"; then
-        log_error "Ошибка при загрузке скрипта $script_name"
-        cleanup
-        exit 1
-    fi
-    
-    chmod +x "$target_dir/$script_name"
-    log "✓ Скрипт $script_name успешно загружен"
-}
-
-# Функция запуска скрипта
-run_script() {
-    local script_path=$1
-    log "Запуск скрипта..."
-    
-    if [ -x "$script_path" ]; then
-        "$script_path"
-        local exit_code=$?
-        
-        if [ $exit_code -eq 0 ]; then
-            log "✓ Скрипт успешно выполнен"
-        else
-            log_error "Скрипт завершился с ошибкой (код: $exit_code)"
-        fi
-    else
-        log_error "Скрипт не найден или не является исполняемым"
-        return 1
-    fi
-}
-
-# Функция интерактивного выбора
-show_interactive_menu() {
-    echo -e "${YELLOW}=== Server Scripts Launcher v${VERSION} ===${NC}"
-    echo -e "Текущая дата: ${GREEN}$CURRENT_DATE${NC}"
-    echo -e "Пользователь: ${GREEN}$CURRENT_USER${NC}\n"
-    
-    echo -e "${YELLOW}Доступные скрипты:${NC}"
-    echo "1. Установка XanMod Kernel с BBR3 (install_xanmod.sh)"
-    echo "2. Проверка конфигурации BBR (bbr_info.sh)"
-    echo "3. Выход"
+# Очистка экрана и вывод меню
+show_menu() {
+    clear
+    echo -e "${BLUE}=== Server Scripts Manager ===${NC}"
+    echo -e "${YELLOW}Текущая дата: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
     echo
+
+    local i=1
+    for module in "${!MODULES[@]}"; do
+        echo -e "$i. ${MODULES[$module]}"
+        ((i++))
+    done
     
-    # Запрос выбора пользователя с проверкой на pipe
-    if [ -t 0 ]; then
-        echo -e "${YELLOW}Выберите действие (1-3):${NC}"
-        read -r choice
-        echo "$choice"
-    else
-        # Если скрипт запущен через pipe, автоматически выбираем первый вариант
-        choice="1"
-        echo -e "${YELLOW}Автоматический выбор: ${NC}установка XanMod Kernel"
-    fi
+    echo -e "\n0. Выход"
+    echo
 }
 
 # Основная функция
 main() {
-    # Проверка root прав
+    # Проверки
     check_root
-    
-    # Проверка и установка зависимостей
     check_dependencies
+    create_directories
     
-    # Создание временной директории
-    mkdir -p "$TEMP_DIR"
-    
-    # Показ меню и получение выбора
-    local choice
-    if [ -t 0 ]; then
-        show_interactive_menu
-        choice=$(echo "$REPLY" | tr -dc '1-3')
-    else
-        # При запуске через pipe автоматически выбираем установку XanMod
-        choice="1"
-        show_interactive_menu
+    # Проверка и загрузка модулей
+    if ! check_and_download_modules; then
+        log "ERROR" "${RED}Не удалось загрузить все необходимые модули${NC}"
+        exit 1
     fi
-    
-    case $choice in
-        1)
-            download_script "install_xanmod.sh" "$TEMP_DIR"
-            run_script "$TEMP_DIR/install_xanmod.sh"
-            ;;
-        2)
-            download_script "bbr_info.sh" "$TEMP_DIR"
-            run_script "$TEMP_DIR/bbr_info.sh"
-            ;;
-        3)
-            log "Выход из программы"
-            ;;
-        *)
-            log_error "Неверный выбор"
-            exit 1
-            ;;
-    esac
-    
-    # Очистка после выполнения
-    cleanup
-}
 
-# Обработка прерывания
-trap cleanup EXIT
+    # Если скрипт запущен через pipe, автоматически запускаем установку XanMod
+    if [ ! -t 0 ]; then
+        log "INFO" "Автоматический запуск установки XanMod"
+        if [ -f "$MODULES_DIR/install_xanmod.sh" ]; then
+            bash "$MODULES_DIR/install_xanmod.sh"
+        else
+            log "ERROR" "Модуль установки XanMod не найден"
+            exit 1
+        fi
+        exit 0
+    fi
+
+    # Интерактивное меню для обычного запуска
+    while true; do
+        show_menu
+        read -p "Выберите действие (0-${#MODULES[@]}): " choice
+        
+        case $choice in
+            0)
+                echo -e "\n${GREEN}До свидания!${NC}"
+                exit 0
+                ;;
+            [1-9])
+                local i=1
+                for module in "${!MODULES[@]}"; do
+                    if [ "$i" -eq "$choice" ]; then
+                        if [ -f "$MODULES_DIR/$module" ]; then
+                            bash "$MODULES_DIR/$module"
+                        else
+                            log "ERROR" "Модуль $module не найден"
+                        fi
+                        break
+                    fi
+                    ((i++))
+                done
+                ;;
+            *)
+                log "ERROR" "Неверный выбор"
+                sleep 1
+                ;;
+        esac
+    done
+}
 
 # Запуск основной функции
 main
