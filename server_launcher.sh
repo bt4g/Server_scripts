@@ -2,7 +2,8 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-20 10:20:40
+# Created: 2025-02-20 10:27:02
+# Current User: gopnikgame
 
 # Цветовые коды
 RED='\033[0;31m'
@@ -90,11 +91,22 @@ check_dependencies() {
     fi
 }
 
-# Очистка экрана и вывод меню
+# Показать краткое меню для pipe
+show_pipe_menu() {
+    echo -e "${BLUE}=== Server Scripts Manager ===${NC}"
+    echo -e "${YELLOW}Доступные скрипты:${NC}"
+    echo "1. Установка XanMod Kernel с BBR3"
+    echo "2. Проверка конфигурации BBR"
+    echo
+    echo -e "${YELLOW}Введите номер скрипта (1-2):${NC}"
+}
+
+# Очистка экрана и вывод полного меню
 show_menu() {
     clear
     echo -e "${BLUE}=== Server Scripts Manager ===${NC}"
     echo -e "${YELLOW}Текущая дата: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
+    echo -e "${YELLOW}Пользователь: gopnikgame${NC}"
     echo
 
     local i=1
@@ -105,6 +117,26 @@ show_menu() {
     
     echo -e "\n0. Выход"
     echo
+}
+
+# Запуск выбранного модуля
+run_module() {
+    local choice=$1
+    local i=1
+    for module in "${!MODULES[@]}"; do
+        if [ "$i" -eq "$choice" ]; then
+            if [ -f "$MODULES_DIR/$module" ]; then
+                log "INFO" "Запуск модуля: $module"
+                bash "$MODULES_DIR/$module"
+                return 0
+            else
+                log "ERROR" "Модуль $module не найден"
+                return 1
+            fi
+        fi
+        ((i++))
+    done
+    return 1
 }
 
 # Основная функция
@@ -120,19 +152,25 @@ main() {
         exit 1
     fi
 
-    # Если скрипт запущен через pipe, автоматически запускаем установку XanMod
+    # Определяем режим работы (pipe или интерактивный)
     if [ ! -t 0 ]; then
-        log "INFO" "Автоматический запуск установки XanMod"
-        if [ -f "$MODULES_DIR/install_xanmod.sh" ]; then
-            bash "$MODULES_DIR/install_xanmod.sh"
-        else
-            log "ERROR" "Модуль установки XanMod не найден"
-            exit 1
-        fi
+        # Режим pipe
+        show_pipe_menu
+        # Ждем ввод в течение 10 секунд
+        read -t 10 choice
+        case $choice in
+            1|2)
+                run_module "$choice"
+                ;;
+            *)
+                log "ERROR" "Неверный выбор или время ожидания истекло. Запуск установки XanMod по умолчанию."
+                run_module 1
+                ;;
+        esac
         exit 0
     fi
 
-    # Интерактивное меню для обычного запуска
+    # Интерактивный режим
     while true; do
         show_menu
         read -p "Выберите действие (0-${#MODULES[@]}): " choice
@@ -142,19 +180,8 @@ main() {
                 echo -e "\n${GREEN}До свидания!${NC}"
                 exit 0
                 ;;
-            [1-9])
-                local i=1
-                for module in "${!MODULES[@]}"; do
-                    if [ "$i" -eq "$choice" ]; then
-                        if [ -f "$MODULES_DIR/$module" ]; then
-                            bash "$MODULES_DIR/$module"
-                        else
-                            log "ERROR" "Модуль $module не найден"
-                        fi
-                        break
-                    fi
-                    ((i++))
-                done
+            [1-2])
+                run_module "$choice"
                 ;;
             *)
                 log "ERROR" "Неверный выбор"
