@@ -2,12 +2,12 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-20 10:09:53
+# Created: 2025-02-20 10:13:16
 # Description: Launcher for Server Scripts Collection
 
 # Константы
 REPO_URL="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
-CURRENT_DATE="2025-02-20 10:09:53"
+CURRENT_DATE="2025-02-20 10:13:16"
 CURRENT_USER="gopnikgame"
 TEMP_DIR="/tmp/server_scripts"
 VERSION="1.0.0"
@@ -88,45 +88,6 @@ download_script() {
     log "✓ Скрипт $script_name успешно загружен"
 }
 
-# Функция показа меню и получения выбора
-get_user_choice() {
-    local choice
-    
-    # Сохраняем текущие настройки термина
-    local saved_settings
-    saved_settings=$(stty -g)
-    
-    # Настраиваем терминал для корректного чтения ввода
-    stty raw -echo
-    
-    clear
-    echo -e "${YELLOW}=== Server Scripts Launcher v${VERSION} ===${NC}"
-    echo -e "Текущая дата: ${GREEN}$CURRENT_DATE${NC}"
-    echo -e "Пользователь: ${GREEN}$CURRENT_USER${NC}\n"
-    
-    echo -e "${YELLOW}Доступные скрипты:${NC}"
-    echo "1. Установка XanMod Kernel с BBR3 (install_xanmod.sh)"
-    echo "2. Проверка конфигурации BBR (bbr_info.sh)"
-    echo "3. Выход"
-    echo
-    echo -e "${YELLOW}Выберите действие (1-3):${NC}"
-    
-    # Читаем один символ
-    choice=$(dd bs=1 count=1 2>/dev/null)
-    
-    # Восстанавливаем настройки термина
-    stty "$saved_settings"
-    
-    # Печатаем выбор и переход на новую строку
-    echo "$choice"
-    echo
-    
-    case $choice in
-        1|2|3) echo "$choice" ;;
-        *) echo "invalid" ;;
-    esac
-}
-
 # Функция запуска скрипта
 run_script() {
     local script_path=$1
@@ -147,6 +108,30 @@ run_script() {
     fi
 }
 
+# Функция интерактивного выбора
+show_interactive_menu() {
+    echo -e "${YELLOW}=== Server Scripts Launcher v${VERSION} ===${NC}"
+    echo -e "Текущая дата: ${GREEN}$CURRENT_DATE${NC}"
+    echo -e "Пользователь: ${GREEN}$CURRENT_USER${NC}\n"
+    
+    echo -e "${YELLOW}Доступные скрипты:${NC}"
+    echo "1. Установка XanMod Kernel с BBR3 (install_xanmod.sh)"
+    echo "2. Проверка конфигурации BBR (bbr_info.sh)"
+    echo "3. Выход"
+    echo
+    
+    # Запрос выбора пользователя с проверкой на pipe
+    if [ -t 0 ]; then
+        echo -e "${YELLOW}Выберите действие (1-3):${NC}"
+        read -r choice
+        echo "$choice"
+    else
+        # Если скрипт запущен через pipe, автоматически выбираем первый вариант
+        choice="1"
+        echo -e "${YELLOW}Автоматический выбор: ${NC}установка XanMod Kernel"
+    fi
+}
+
 # Основная функция
 main() {
     # Проверка root прав
@@ -158,9 +143,16 @@ main() {
     # Создание временной директории
     mkdir -p "$TEMP_DIR"
     
-    # Получаем выбор пользователя
+    # Показ меню и получение выбора
     local choice
-    choice=$(get_user_choice)
+    if [ -t 0 ]; then
+        show_interactive_menu
+        choice=$(echo "$REPLY" | tr -dc '1-3')
+    else
+        # При запуске через pipe автоматически выбираем установку XanMod
+        choice="1"
+        show_interactive_menu
+    fi
     
     case $choice in
         1)
@@ -175,7 +167,7 @@ main() {
             log "Выход из программы"
             ;;
         *)
-            log_error "Неверный выбор. Пожалуйста, запустите скрипт заново."
+            log_error "Неверный выбор"
             exit 1
             ;;
     esac
