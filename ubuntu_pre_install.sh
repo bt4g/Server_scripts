@@ -2,7 +2,7 @@
 set -e
 
 # Метаданные скрипта
-SCRIPT_VERSION="1.0.10"
+SCRIPT_VERSION="1.0.11"
 SCRIPT_DATE="2025-02-20 18:21:09"
 SCRIPT_AUTHOR="gopnikgame"
 
@@ -183,22 +183,26 @@ if [ ! -f "/root/.ssh/authorized_keys" ]; then
     chmod 600 /root/.ssh/authorized_keys
 fi
 
-# Запрос публичного ключа SSH у пользователя
-log "INFO" "Для продолжения настройки SSH требуется ваш публичный ключ."
-log "INFO" "Публичный ключ обычно находится в файле ~/.ssh/id_rsa.pub или ~/.ssh/id_ed25519.pub."
-log "INFO" "Пример публичного ключа:"
-log "INFO" "ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEArV1... user@hostname"
-read -p "Введите ваш публичный ключ SSH: " public_key
+# Проверка наличия публичного ключа в authorized_keys
+if [ -s "/root/.ssh/authorized_keys" ]; then
+    log "INFO" "Публичный ключ уже настроен в /root/.ssh/authorized_keys. Пропускаем шаг добавления ключа."
+else
+    log "INFO" "Для продолжения настройки SSH требуется ваш публичный ключ."
+    log "INFO" "Публичный ключ обычно находится в файле ~/.ssh/id_rsa.pub или ~/.ssh/id_ed25519.pub."
+    log "INFO" "Пример публичного ключа:"
+    log "INFO" "ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEArV1... user@hostname"
+    read -p "Введите ваш публичный ключ SSH: " public_key
 
-# Проверка валидности публичного ключа
-if [[ -z "$public_key" || ! "$public_key" =~ ^ssh-(rsa|ed25519|ecdsa) ]]; then
-    log "ERROR" "Некорректный публичный ключ. Убедитесь, что вы ввели его правильно."
-    exit 1
+    # Проверка валидности публичного ключа
+    if [[ -z "$public_key" || ! "$public_key" =~ ^ssh-(rsa|ed25519|ecdsa) ]]; then
+        log "ERROR" "Некорректный публичный ключ. Убедитесь, что вы ввели его правильно."
+        exit 1
+    fi
+
+    # Добавление публичного ключа в authorized_keys
+    echo "$public_key" >> /root/.ssh/authorized_keys
+    log "INFO" "Публичный ключ успешно добавлен в /root/.ssh/authorized_keys."
 fi
-
-# Добавление публичного ключа в authorized_keys
-echo "$public_key" >> /root/.ssh/authorized_keys
-log "INFO" "Публичный ключ успешно добавлен в /root/.ssh/authorized_keys."
 
 # Копирование текущего конфига SSH
 cp /etc/ssh/sshd_config "$BACKUP_DIR/"
