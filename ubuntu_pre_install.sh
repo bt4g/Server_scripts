@@ -2,7 +2,7 @@
 set -e
 
 # Метаданные скрипта
-SCRIPT_VERSION="1.0.6"
+SCRIPT_VERSION="1.0.7"
 SCRIPT_DATE="2025-02-20 18:21:09"
 SCRIPT_AUTHOR="gopnikgame"
 
@@ -147,7 +147,40 @@ if ! systemctl is-active --quiet ssh; then
     apt install -y openssh-server
 fi
 
+# Создание директории .ssh и файла authorized_keys
+if [ ! -d "/root/.ssh" ]; then
+    log "INFO" "Создание директории /root/.ssh..."
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+fi
+
+if [ ! -f "/root/.ssh/authorized_keys" ]; then
+    log "INFO" "Создание файла /root/.ssh/authorized_keys..."
+    touch /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+fi
+
+# Запрос публичного ключа SSH у пользователя
+log "INFO" "Для продолжения настройки SSH требуется ваш публичный ключ."
+log "INFO" "Публичный ключ обычно находится в файле ~/.ssh/id_rsa.pub или ~/.ssh/id_ed25519.pub."
+log "INFO" "Пример публичного ключа:"
+log "INFO" "ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEArV1... user@hostname"
+read -p "Введите ваш публичный ключ SSH: " public_key
+
+# Проверка валидности публичного ключа
+if [[ -z "$public_key" || ! "$public_key" =~ ^ssh-(rsa|ed25519|ecdsa) ]]; then
+    log "ERROR" "Некорректный публичный ключ. Убедитесь, что вы ввели его правильно."
+    exit 1
+fi
+
+# Добавление публичного ключа в authorized_keys
+echo "$public_key" >> /root/.ssh/authorized_keys
+log "INFO" "Публичный ключ успешно добавлен в /root/.ssh/authorized_keys."
+
+# Копирование текущего конфига SSH
 cp /etc/ssh/sshd_config "$BACKUP_DIR/"
+
+# Настройка параметров SSH
 update_ssh_config "PermitRootLogin" "prohibit-password"
 update_ssh_config "PasswordAuthentication" "no"
 update_ssh_config "X11Forwarding" "no"
@@ -159,6 +192,7 @@ update_ssh_config "LoginGraceTime" "30"
 
 # Перезапуск службы SSH
 systemctl restart ssh
+log "INFO" "Служба SSH перезапущена. Парольная аутентификация отключена."
 
 # Настройка fail2ban
 log "INFO" "Настройка fail2ban..."
