@@ -2,12 +2,12 @@
 
 # Version: 1.0.0
 # Author: gopnikgame
-# Created: 2025-02-17 05:15:50
+# Created: 2025-02-20 10:09:53
 # Description: Launcher for Server Scripts Collection
 
 # Константы
 REPO_URL="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
-CURRENT_DATE="2025-02-17 05:15:50"
+CURRENT_DATE="2025-02-20 10:09:53"
 CURRENT_USER="gopnikgame"
 TEMP_DIR="/tmp/server_scripts"
 VERSION="1.0.0"
@@ -64,8 +64,10 @@ check_dependencies() {
 
 # Функция очистки
 cleanup() {
-    log "Очистка временных файлов..."
-    rm -rf "$TEMP_DIR"
+    if [ -d "$TEMP_DIR" ]; then
+        log "Очистка временных файлов..."
+        rm -rf "$TEMP_DIR"
+    fi
 }
 
 # Функция загрузки скрипта
@@ -86,8 +88,17 @@ download_script() {
     log "✓ Скрипт $script_name успешно загружен"
 }
 
-# Функция показа меню
-show_menu() {
+# Функция показа меню и получения выбора
+get_user_choice() {
+    local choice
+    
+    # Сохраняем текущие настройки термина
+    local saved_settings
+    saved_settings=$(stty -g)
+    
+    # Настраиваем терминал для корректного чтения ввода
+    stty raw -echo
+    
     clear
     echo -e "${YELLOW}=== Server Scripts Launcher v${VERSION} ===${NC}"
     echo -e "Текущая дата: ${GREEN}$CURRENT_DATE${NC}"
@@ -99,6 +110,21 @@ show_menu() {
     echo "3. Выход"
     echo
     echo -e "${YELLOW}Выберите действие (1-3):${NC}"
+    
+    # Читаем один символ
+    choice=$(dd bs=1 count=1 2>/dev/null)
+    
+    # Восстанавливаем настройки термина
+    stty "$saved_settings"
+    
+    # Печатаем выбор и переход на новую строку
+    echo "$choice"
+    echo
+    
+    case $choice in
+        1|2|3) echo "$choice" ;;
+        *) echo "invalid" ;;
+    esac
 }
 
 # Функция запуска скрипта
@@ -132,32 +158,27 @@ main() {
     # Создание временной директории
     mkdir -p "$TEMP_DIR"
     
-    while true; do
-        show_menu
-        read -r choice
-        
-        case $choice in
-            1)
-                download_script "install_xanmod.sh" "$TEMP_DIR"
-                run_script "$TEMP_DIR/install_xanmod.sh"
-                break
-                ;;
-            2)
-                download_script "bbr_info.sh" "$TEMP_DIR"
-                run_script "$TEMP_DIR/bbr_info.sh"
-                break
-                ;;
-            3)
-                log "Выход из программы"
-                cleanup
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}Неверный выбор. Пожалуйста, выберите 1-3${NC}"
-                sleep 2
-                ;;
-        esac
-    done
+    # Получаем выбор пользователя
+    local choice
+    choice=$(get_user_choice)
+    
+    case $choice in
+        1)
+            download_script "install_xanmod.sh" "$TEMP_DIR"
+            run_script "$TEMP_DIR/install_xanmod.sh"
+            ;;
+        2)
+            download_script "bbr_info.sh" "$TEMP_DIR"
+            run_script "$TEMP_DIR/bbr_info.sh"
+            ;;
+        3)
+            log "Выход из программы"
+            ;;
+        *)
+            log_error "Неверный выбор. Пожалуйста, запустите скрипт заново."
+            exit 1
+            ;;
+    esac
     
     # Очистка после выполнения
     cleanup
