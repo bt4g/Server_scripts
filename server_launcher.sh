@@ -21,7 +21,7 @@ GITHUB_RAW="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
 SCRIPT_VERSION="1.0.3"
 SCRIPT_NAME="server_launcher.sh"
 
-# Массив модулей с версиями
+# Массив модулей с версиями (обновленный порядок)
 declare -A MODULES=(
     ["ubuntu_pre_install.sh"]="Первоначальная настройка Ubuntu 24.04"
     ["install_xanmod.sh"]="Установка XanMod Kernel с BBR3"
