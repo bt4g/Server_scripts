@@ -46,7 +46,6 @@ wget -qO server_launcher.sh https://raw.githubusercontent.com/gopnikgame/Server_
 
 - Отключение парольной аутентификации SSH
 - Блокировка подозрительных IP-адресов
-- Настройка fail2ban
 - Оптимизированные правила файрволла
 - DNS через DoH (DNS-over-HTTPS)
 
