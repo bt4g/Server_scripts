@@ -110,6 +110,27 @@ update_system() {
 # Настройка DNS через systemd-resolved
 configure_dns() {
     log "INFO" "Настройка DNS через systemd-resolved..."
+    
+    # Проверка, работаем ли мы в контейнере или виртуализированной среде
+    check_virtualization() {
+        log "INFO" "Проверка среды выполнения..."
+        
+        if [ -f "/.dockerenv" ] || grep -q "docker\|lxc\|container" /proc/1/cgroup 2>/dev/null; then
+            log "INFO" "Обнаружено выполнение в контейнере"
+            return 0
+        elif command -v systemd-detect-virt >/dev/null && systemd-detect-virt -q 2>/dev/null; then
+            virt_type=$(systemd-detect-virt 2>/dev/null)
+            log "INFO" "Обнаружена виртуализация: $virt_type"
+            return 0
+        fi
+        
+        log "INFO" "Среда выполнения: физический хост"
+        return 1
+    }
+    
+    # Проверяем среду выполнения
+    is_virtualized=0
+    check_virtualization && is_virtualized=1
 
     # Проверка состояния systemd-resolved
     if systemctl is-enabled systemd-resolved >/dev/null 2>&1; then
@@ -167,7 +188,7 @@ configure_dns() {
             ;;
     esac
 
-    # Создание новой конфигурации
+    # Создание новой конфигурации resolved
     cat > /etc/systemd/resolved.conf << EOF
 [Resolve]
 # Основной DNS
@@ -186,49 +207,162 @@ EOF
     # Проверка и настройка resolv.conf
     log "INFO" "Настройка /etc/resolv.conf..."
     
-    # Сохраняем оригинальный resolv.conf
+    # Получение первого IP из выбранного DNS без DoH суффикса
+    primary_ip=$(echo "$primary_dns" | cut -d'#' -f1 | awk '{print $1}')
+    
+    # Проверяем, можно ли изменить resolv.conf
     if [ -f "/etc/resolv.conf" ]; then
-        # Если это не ссылка, делаем резервную копию
+        # Проверка на immutable бит
+        if command -v lsattr >/dev/null 2>&1; then
+            log "INFO" "Проверка атрибутов /etc/resolv.conf..."
+            lsattr_output=$(lsattr /etc/resolv.conf 2>/dev/null || echo "")
+            
+            if echo "$lsattr_output" | grep -q "i"; then
+                log "INFO" "Обнаружен immutable бит на /etc/resolv.conf. Снимаем..."
+                chattr -i /etc/resolv.conf 2>/dev/null || true
+            fi
+        fi
+        
+        # Сохраняем резервную копию
         if [ ! -L "/etc/resolv.conf" ]; then
             backup_file "/etc/resolv.conf"
             log "INFO" "Сохранена резервная копия /etc/resolv.conf"
         fi
         
-        # Удаляем существующий файл или ссылку
-        rm -f "/etc/resolv.conf"
+        # Пытаемся удалить существующий файл
+        rm -f "/etc/resolv.conf" 2>/dev/null || true
     fi
     
-    # Создаем новую символическую ссылку
-    if ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; then
+    # Если удалось удалить старый файл, создаем символьную ссылку
+    if [ ! -f "/etc/resolv.conf" ] && ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; then
         log "INFO" "✓ Символическая ссылка /etc/resolv.conf успешно создана."
     else
         log "WARNING" "⚠ Не удалось создать символическую ссылку /etc/resolv.conf."
-        log "WARNING" "Пытаемся создать файл напрямую..."
         
-        # Если не удалось создать ссылку, создаем файл с настройками напрямую
-        cat > /etc/resolv.conf << EOF
-# Создано скриптом ubuntu_pre_install.sh
+        # Если символьная ссылка не удалась, и мы в виртуализированной среде
+        if [ $is_virtualized -eq 1 ]; then
+            log "INFO" "Используем альтернативные методы настройки DNS в виртуализированной среде..."
+            
+            # Используем resolvectl для настройки DNS, если он доступен
+            if command -v resolvectl >/dev/null 2>&1; then
+                log "INFO" "Настройка DNS через resolvectl..."
+                
+                # Разбиваем DNS-строки на отдельные серверы
+                IFS=' ' read -ra PRIMARY_SERVERS <<< "$primary_dns"
+                
+                # Получаем список активных интерфейсов, кроме lo
+                interfaces=$(ip -o link show | awk -F': ' '{print $2}' | grep -v "lo")
+                
+                # Если список интерфейсов пуст, используем хотя бы основной интерфейс
+                if [ -z "$interfaces" ]; then
+                    interfaces=$(ip route | grep default | awk '{print $5}')
+                fi
+                
+                # Применяем для всех интерфейсов
+                for iface in $interfaces; do
+                    for dns_server in "${PRIMARY_SERVERS[@]}"; do
+                        dns_ip=$(echo "$dns_server" | cut -d'#' -f1)
+                        resolvectl dns "$iface" "$dns_ip" >/dev/null 2>&1 || true
+                    done
+                    resolvectl domain "$iface" "~." >/dev/null 2>&1 || true
+                    log "INFO" "Настроен DNS для интерфейса: $iface"
+                done
+            fi
+            
+            # Как запасной вариант, используем resolvconf, если он доступен
+            if command -v resolvconf >/dev/null 2>&1; then
+                log "INFO" "Применение настроек через resolvconf..."
+                
+                mkdir -p /etc/resolvconf/resolv.conf.d
+                cat > /etc/resolvconf/resolv.conf.d/head << EOF
+# Настроено скриптом ubuntu_pre_install.sh
 # Дата: $(date "+%Y-%m-%d %H:%M:%S")
-# Внимание: этот файл не является символической ссылкой на systemd-resolved
-
+nameserver $primary_ip
 nameserver 127.0.0.53
 options edns0 trust-ad
 search .
 EOF
-        log "INFO" "✓ Файл /etc/resolv.conf создан напрямую."
+                
+                resolvconf -u
+                log "INFO" "Настройки применены через resolvconf"
+            fi
+            
+            # Если ничего не помогло, пытаемся создать напрямую
+            if [ ! -f "/etc/resolv.conf" ] || ! grep -q "$primary_ip" /etc/resolv.conf; then
+                log "INFO" "Пытаемся создать файл resolv.conf напрямую..."
+                
+                # Создаем временный файл и затем перемещаем его
+                temp_file=$(mktemp)
+                cat > "$temp_file" << EOF
+# Создано скриптом ubuntu_pre_install.sh
+# Дата: $(date "+%Y-%m-%d %H:%M:%S")
+nameserver $primary_ip
+nameserver 127.0.0.53
+options edns0 trust-ad
+search .
+EOF
+                
+                # Пробуем скопировать файл вместо перемещения
+                cat "$temp_file" > /etc/resolv.conf 2>/dev/null || true
+                rm -f "$temp_file"
+                
+                if grep -q "$primary_ip" /etc/resolv.conf; then
+                    log "INFO" "✓ Файл /etc/resolv.conf успешно создан."
+                else
+                    log "WARNING" "⚠ Не удалось настроить /etc/resolv.conf напрямую."
+                    log "INFO" "Попробуйте выполнить настройку DNS вручную после перезагрузки."
+                    
+                    # Сохраняем настройки в файл для ручного применения
+                    echo -e "${YELLOW}Выбранные DNS-серверы:${NC}" > /root/dns_settings.txt
+                    echo "Основной: $primary_dns" >> /root/dns_settings.txt
+                    echo "Резервный 1: $fallback_dns1" >> /root/dns_settings.txt
+                    echo "Резервный 2: $fallback_dns2" >> /root/dns_settings.txt
+                    echo -e "\nДля ручной настройки используйте команду:" >> /root/dns_settings.txt
+                    echo "echo 'nameserver $primary_ip' > /etc/resolv.conf" >> /root/dns_settings.txt
+                    
+                    log "INFO" "Сохранены настройки DNS в файл /root/dns_settings.txt"
+                fi
+            fi
+        else
+            # Для физического хоста
+            log "INFO" "Настройка DNS для физического хоста..."
+            
+            # Перезапускаем systemd-resolved даже при ошибках
+            systemctl restart systemd-resolved || true
+            
+            # Проверяем, работает ли системный резолвер
+            nslookup google.com 127.0.0.53 >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                log "INFO" "✓ Системный резолвер (127.0.0.53) работает."
+            else
+                log "WARNING" "⚠ Системный резолвер не работает. Настраиваем напрямую..."
+                
+                # Пытаемся создать файл resolv.conf напрямую
+                cat > /etc/resolv.conf.new << EOF
+# Создано скриптом ubuntu_pre_install.sh
+# Дата: $(date "+%Y-%m-%d %H:%M:%S")
+nameserver $primary_ip
+options edns0
+EOF
+                
+                # Пытаемся заменить файл
+                cat /etc/resolv.conf.new > /etc/resolv.conf 2>/dev/null || true
+                rm -f /etc/resolv.conf.new
+            fi
+        fi
     fi
 
     # Перезапуск службы DNS
     log "INFO" "Перезапуск systemd-resolved..."
-    systemctl restart systemd-resolved
-
+    systemctl restart systemd-resolved || true
+    
     # Дополнительная проверка resolvectl
     if command -v resolvectl &> /dev/null; then
         log "INFO" "Статус DNS (resolvectl):"
-        resolvectl status
+        resolvectl status | grep -E "DNS Server|DNS Domain" || true
     fi
     
-    log "INFO" "DNS успешно настроен."
+    log "INFO" "DNS настроен."
 
     # Проверка работы DNS
     log "INFO" "Проверка работы DNS..."
@@ -236,22 +370,41 @@ EOF
         log "INFO" "✓ DNS работает корректно."
     else
         log "WARNING" "⚠ Проблемы с DNS. Проверьте конфигурацию."
+        log "WARNING" "Рекомендуется перезагрузить систему после завершения скрипта."
         
         # Дополнительная диагностика
         log "INFO" "Выполнение диагностики DNS..."
         log "INFO" "Содержимое /etc/resolv.conf:"
-        cat /etc/resolv.conf
+        cat /etc/resolv.conf || true
         
-        log "INFO" "Попытка ручного разрешения имен через серверы DNS:"
+        log "INFO" "Попытка ручного разрешения имен через выбранный DNS-сервер:"
         if command -v dig &> /dev/null; then
-            dig @94.140.14.14 google.com +short
-            dig @8.8.8.8 google.com +short
+            dig @"$primary_ip" google.com +short || true
         elif command -v nslookup &> /dev/null; then
-            nslookup google.com 94.140.14.14
-            nslookup google.com 8.8.8.8
+            nslookup google.com "$primary_ip" || true
         fi
+        
+        # Сообщаем о возможных причинах проблемы
+        log "WARNING" "Возможные причины проблем с DNS:"
+        log "WARNING" "1. Блокировка DNS-трафика провайдером или файрволлом"
+        log "WARNING" "2. Проблемы с настройкой сети или маршрутизацией"
+        log "WARNING" "3. Ограничения в виртуализированной среде"
+        # Предлагаем решение
+        log "INFO" "Попробуйте следующее:"
+        log "INFO" "1. Перезапустите систему"
+        log "INFO" "2. Проверьте соединение с интернетом: ping 8.8.8.8"
+        log "INFO" "3. Проверьте работу DNS вручную: nslookup google.com $primary_ip"
+        
+        # Сохраняем информацию в лог-файл
+        echo "==== Диагностика DNS $(date) ====" >> "$LOG_FILE"
+        echo "Выбранный DNS: $primary_ip" >> "$LOG_FILE"
+        echo "Содержимое /etc/resolv.conf:" >> "$LOG_FILE"
+        cat /etc/resolv.conf >> "$LOG_FILE" 2>&1 || echo "Не удалось прочитать /etc/resolv.conf" >> "$LOG_FILE"
+        echo "Результат проверки:" >> "$LOG_FILE"
+        host google.com >> "$LOG_FILE" 2>&1 || echo "Ошибка при проверке host google.com" >> "$LOG_FILE"
+        echo "=================================" >> "$LOG_FILE"
     fi
-   }
+}
 # Настройка файрволла (UFW)
 configure_firewall() {
     log "INFO" "Настройка UFW..."
