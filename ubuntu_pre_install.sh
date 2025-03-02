@@ -183,10 +183,51 @@ CacheFromLocalhost=yes
 DNSStubListener=yes
 EOF
 
-    # Убедитесь, что resolv.conf является символической ссылкой
-    ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+    # Проверка и настройка resolv.conf
+    log "INFO" "Настройка /etc/resolv.conf..."
+    
+    # Сохраняем оригинальный resolv.conf
+    if [ -f "/etc/resolv.conf" ]; then
+        # Если это не ссылка, делаем резервную копию
+        if [ ! -L "/etc/resolv.conf" ]; then
+            backup_file "/etc/resolv.conf"
+            log "INFO" "Сохранена резервная копия /etc/resolv.conf"
+        fi
+        
+        # Удаляем существующий файл или ссылку
+        rm -f "/etc/resolv.conf"
+    fi
+    
+    # Создаем новую символическую ссылку
+    if ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; then
+        log "INFO" "✓ Символическая ссылка /etc/resolv.conf успешно создана."
+    else
+        log "WARNING" "⚠ Не удалось создать символическую ссылку /etc/resolv.conf."
+        log "WARNING" "Пытаемся создать файл напрямую..."
+        
+        # Если не удалось создать ссылку, создаем файл с настройками напрямую
+        cat > /etc/resolv.conf << EOF
+# Создано скриптом ubuntu_pre_install.sh
+# Дата: $(date "+%Y-%m-%d %H:%M:%S")
+# Внимание: этот файл не является символической ссылкой на systemd-resolved
 
+nameserver 127.0.0.53
+options edns0 trust-ad
+search .
+EOF
+        log "INFO" "✓ Файл /etc/resolv.conf создан напрямую."
+    fi
+
+    # Перезапуск службы DNS
+    log "INFO" "Перезапуск systemd-resolved..."
     systemctl restart systemd-resolved
+
+    # Дополнительная проверка resolvectl
+    if command -v resolvectl &> /dev/null; then
+        log "INFO" "Статус DNS (resolvectl):"
+        resolvectl status
+    fi
+    
     log "INFO" "DNS успешно настроен."
 
     # Проверка работы DNS
@@ -195,9 +236,22 @@ EOF
         log "INFO" "✓ DNS работает корректно."
     else
         log "WARNING" "⚠ Проблемы с DNS. Проверьте конфигурацию."
+        
+        # Дополнительная диагностика
+        log "INFO" "Выполнение диагностики DNS..."
+        log "INFO" "Содержимое /etc/resolv.conf:"
+        cat /etc/resolv.conf
+        
+        log "INFO" "Попытка ручного разрешения имен через серверы DNS:"
+        if command -v dig &> /dev/null; then
+            dig @94.140.14.14 google.com +short
+            dig @8.8.8.8 google.com +short
+        elif command -v nslookup &> /dev/null; then
+            nslookup google.com 94.140.14.14
+            nslookup google.com 8.8.8.8
+        fi
     fi
-}
-
+   }
 # Настройка файрволла (UFW)
 configure_firewall() {
     log "INFO" "Настройка UFW..."
