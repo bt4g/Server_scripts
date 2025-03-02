@@ -3,7 +3,7 @@ set -e
 
 # Метаданные скрипта
 SCRIPT_VERSION="1.0.13"
-SCRIPT_DATE="2025-03-02 13:30:33"
+SCRIPT_DATE="2025-03-02 13:51:12"
 SCRIPT_AUTHOR="gopnikgame"
 
 # Цветовые коды
@@ -16,6 +16,10 @@ NC='\033[0m'
 BACKUP_DIR="/root/config_backup_$(date +%Y%m%d_%H%M%S)"
 LOG_FILE="/var/log/system_setup.log"
 MIN_FREE_SPACE_KB=2097152  # 2GB в килобайтах
+
+# Создаем директорию для резервных копий и логов
+mkdir -p "$BACKUP_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
 
 # Функция логирования с цветным выводом
 log() {
@@ -46,9 +50,6 @@ rollback() {
 # Установка обработчика ошибок
 trap rollback ERR
 
-# Создание директории для логов
-mkdir -p "$(dirname "$LOG_FILE")"
-
 # Проверка root прав
 if [ "$EUID" -ne 0 ]; then 
     log "ERROR" "Этот скрипт должен быть запущен с правами root"
@@ -71,7 +72,15 @@ check_free_space
 backup_file() {
     local src="$1"
     if [ -f "$src" ]; then
+        # Проверяем, что директория для бэкапа существует
+        if [ ! -d "$BACKUP_DIR" ]; then
+            mkdir -p "$BACKUP_DIR"
+            log "INFO" "Создана директория для резервных копий: $BACKUP_DIR"
+        fi
+        
+        # Копируем файл
         cp "$src" "$BACKUP_DIR/" || { log "ERROR" "Не удалось создать резервную копию: $src"; exit 1; }
+        log "INFO" "Создана резервная копия файла: $src"
     else
         log "WARNING" "Файл не найден для резервного копирования: $src"
     fi
@@ -343,3 +352,18 @@ show_menu
 
 # Финальная информация
 log "INFO" "=== Установка завершена ==="
+log "INFO" "Backup directory: $BACKUP_DIR"
+log "INFO" "Log file: $LOG_FILE"
+
+# Запрос на перезагрузку
+if tty -s; then
+    read -p "Перезагрузить систему сейчас? (y/n): " choice
+    if [[ "$choice" =~ ^[Yy]$ ]]; then
+        log "INFO" "Выполняется перезагрузка..."
+        shutdown -r now
+    else
+        log "WARNING" "Перезагрузка отложена. Рекомендуется перезагрузить систему позже."
+    fi
+else
+    log "INFO" "Скрипт запущен в неинтерактивном режиме. Перезагрузка не выполняется."
+fi
