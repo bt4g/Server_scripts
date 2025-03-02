@@ -15,7 +15,7 @@ NC='\033[0m'
 # Константы
 BACKUP_DIR="/root/config_backup_$(date +%Y%m%d_%H%M%S)"
 LOG_FILE="/var/log/system_setup.log"
-MIN_FREE_SPACE_KB=5242880  # 5GB в килобайтах
+MIN_FREE_SPACE_KB=2097152  # 2GB в килобайтах
 
 # Функция логирования с цветным выводом
 log() {
