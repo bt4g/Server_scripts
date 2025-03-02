@@ -2,8 +2,8 @@
 set -e
 
 # Метаданные скрипта
-SCRIPT_VERSION="1.0.12"
-SCRIPT_DATE="2025-02-20 18:21:09"
+SCRIPT_VERSION="1.0.13"
+SCRIPT_DATE="2025-03-02 13:30:33"
 SCRIPT_AUTHOR="gopnikgame"
 
 # Цветовые коды
@@ -111,11 +111,59 @@ configure_dns() {
         systemctl enable systemd-resolved || true
     fi
 
+    # Создание резервной копии текущей конфигурации
+    if [ -f "/etc/systemd/resolved.conf" ]; then
+        backup_file "/etc/systemd/resolved.conf"
+    fi
+
+    # Объявление массивов DNS-серверов
+    declare -A DNS_PROVIDERS
+    DNS_PROVIDERS=(
+        ["Google"]="8.8.8.8#dns.google 8.8.4.4#dns.google"
+        ["Cloudflare"]="1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com"
+        ["AdGuard"]="94.140.14.14#dns.adguard.com 94.140.15.15#dns.adguard.com"
+    )
+
+    # Показать пользователю меню выбора DNS
+    echo -e "\n${YELLOW}=== Выбор основного DNS провайдера ===${NC}"
+    echo "1. Google DNS      (8.8.8.8, 8.8.4.4)"
+    echo "2. Cloudflare DNS  (1.1.1.1, 1.0.0.1)"
+    echo "3. AdGuard DNS     (94.140.14.14, 94.140.15.15)"
+    echo ""
+    read -p "Выберите основной DNS провайдер [1-3, по умолчанию 1]: " dns_choice
+
+    # Определение основного и резервных DNS на основе выбора
+    local primary_dns
+    local fallback_dns1
+    local fallback_dns2
+
+    case "$dns_choice" in
+        2)  # Cloudflare как основной
+            primary_dns="${DNS_PROVIDERS["Cloudflare"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["AdGuard"]}"
+            log "INFO" "Выбран Cloudflare DNS в качестве основного."
+            ;;
+        3)  # AdGuard как основной
+            primary_dns="${DNS_PROVIDERS["AdGuard"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
+            log "INFO" "Выбран AdGuard DNS в качестве основного."
+            ;;
+        *)  # Google как основной (по умолчанию)
+            primary_dns="${DNS_PROVIDERS["Google"]}"
+            fallback_dns1="${DNS_PROVIDERS["Cloudflare"]}"
+            fallback_dns2="${DNS_PROVIDERS["AdGuard"]}"
+            log "INFO" "Выбран Google DNS в качестве основного."
+            ;;
+    esac
+
+    # Создание новой конфигурации
     cat > /etc/systemd/resolved.conf << EOF
 [Resolve]
-# Основной DNS: Google DoH
-DNS=8.8.8.8#dns.google
-FallbackDNS=1.1.1.1#cloudflare-dns.com 94.140.14.14#dns.adguard.com
+# Основной DNS
+DNS=$primary_dns
+FallbackDNS=$fallback_dns1 $fallback_dns2
 Domains=~.
 DNSOverTLS=yes
 DNSSEC=yes
@@ -131,6 +179,14 @@ EOF
 
     systemctl restart systemd-resolved
     log "INFO" "DNS успешно настроен."
+
+    # Проверка работы DNS
+    log "INFO" "Проверка работы DNS..."
+    if host google.com > /dev/null 2>&1; then
+        log "INFO" "✓ DNS работает корректно."
+    else
+        log "WARNING" "⚠ Проблемы с DNS. Проверьте конфигурацию."
+    fi
 }
 
 # Настройка файрволла (UFW)
@@ -287,18 +343,3 @@ show_menu
 
 # Финальная информация
 log "INFO" "=== Установка завершена ==="
-log "INFO" "Backup directory: $BACKUP_DIR"
-log "INFO" "Log file: $LOG_FILE"
-
-# Запрос на перезагрузку
-if tty -s; then
-    read -p "Перезагрузить систему сейчас? (y/n): " choice
-    if [[ "$choice" =~ ^[Yy]$ ]]; then
-        log "INFO" "Выполняется перезагрузка..."
-        shutdown -r now
-    else
-        log "WARNING" "Перезагрузка отложена. Рекомендуется перезагрузить систему позже."
-    fi
-else
-    log "INFO" "Скрипт запущен в неинтерактивном режиме. Перезагрузка не выполняется."
-fi
