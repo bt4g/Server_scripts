@@ -2,7 +2,7 @@
 set -e
 
 # Метаданные скрипта
-SCRIPT_VERSION="1.0.14"
+SCRIPT_VERSION="1.0.15"
 SCRIPT_DATE="2025-05-14 13:51:12"
 SCRIPT_AUTHOR="gopnikgame"
 
