@@ -129,8 +129,26 @@ update_system() {
     apt update
     apt upgrade -y
     apt dist-upgrade -y
-    log "INFO" "Система успешно обновлена."
+    
+    # Очистка системы после обновления
+    log "INFO" "Очистка после обновления..."
+    
+    # Удаление устаревших пакетов
+    print_step "Удаление неиспользуемых пакетов..."
+    apt autoremove -y
+    
+    # Очистка только устаревших пакетов
+    print_step "Очистка устаревших архивов пакетов..."
+    apt autoclean
+    
+    # Проверка свободного места после очистки
+    local free_space_before_clean=$(df -h / | awk 'NR==2 {print $4}')
+    local free_space_after_clean=$(df -h / | awk 'NR==2 {print $4}')
+    
+    print_success "Система успешно обновлена и очищена."
+    log "INFO" "Система успешно обновлена и очищена. Освобождено места: $free_space_after_clean (было: $free_space_before_clean)"
 }
+
 
 # Настройка DNS через systemd-resolved
 configure_dns() {
@@ -621,6 +639,169 @@ EOF
     log "INFO" "Системные твики применены."
 }
 
+# Проверка статуса IPv6
+check_ipv6_status() {
+    if [ "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" -eq 0 ]; then
+        return 0  # IPv6 включен
+    else
+        return 1  # IPv6 выключен
+    fi
+}
+
+# Включение IPv6
+enable_ipv6() {
+    log "INFO" "Включение IPv6..."
+    
+    if check_ipv6_status; then
+        log "INFO" "IPv6 уже включен."
+        print_success "IPv6 уже включен."
+        return 0
+    fi
+
+    print_step "Включение IPv6..."
+    interface_name=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -n 1)
+
+    # Создаем резервную копию sysctl.conf
+    backup_file "/etc/sysctl.conf"
+
+    # Удаляем старые настройки IPv6
+    sed -i '/net.ipv6.conf.all.disable_ipv6/d' /etc/sysctl.conf
+    sed -i '/net.ipv6.conf.default.disable_ipv6/d' /etc/sysctl.conf
+    sed -i '/net.ipv6.conf.lo.disable_ipv6/d' /etc/sysctl.conf
+    sed -i "/net.ipv6.conf.$interface_name.disable_ipv6/d" /etc/sysctl.conf
+
+    # Добавляем новые настройки для включения IPv6
+    echo "# Включение IPv6" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.all.disable_ipv6 = 0" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.default.disable_ipv6 = 0" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.lo.disable_ipv6 = 0" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.$interface_name.disable_ipv6 = 0" >> /etc/sysctl.conf
+
+    # Применяем изменения
+    sysctl -p > /dev/null 2>&1
+
+    log "INFO" "IPv6 успешно включен."
+    print_success "IPv6 успешно включен."
+    
+    # Информация о сетевых интерфейсах с IPv6
+    print_step "Проверка конфигурации IPv6..."
+    ip -6 addr show | grep -v "scope host" || echo "IPv6 адреса пока не назначены."
+    
+    log "INFO" "Рекомендуется перезагрузить систему для полного применения изменений."
+    print_step "Рекомендуется перезагрузить систему для полного применения изменений."
+    
+    return 0
+}
+
+# Отключение IPv6
+disable_ipv6() {
+    log "INFO" "Отключение IPv6..."
+    
+    if ! check_ipv6_status; then
+        log "INFO" "IPv6 уже отключен."
+        print_success "IPv6 уже отключен."
+        return 0
+    fi
+
+    print_step "Отключение IPv6..."
+    interface_name=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -n 1)
+
+    # Создаем резервную копию sysctl.conf
+    backup_file "/etc/sysctl.conf"
+
+    # Удаляем старые настройки IPv6
+    sed -i '/net.ipv6.conf.all.disable_ipv6/d' /etc/sysctl.conf
+    sed -i '/net.ipv6.conf.default.disable_ipv6/d' /etc/sysctl.conf
+    sed -i '/net.ipv6.conf.lo.disable_ipv6/d' /etc/sysctl.conf
+    sed -i "/net.ipv6.conf.$interface_name.disable_ipv6/d" /etc/sysctl.conf
+
+    # Добавляем новые настройки для отключения IPv6
+    echo "# Отключение IPv6" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.lo.disable_ipv6 = 1" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.$interface_name.disable_ipv6 = 1" >> /etc/sysctl.conf
+
+    # Применяем изменения
+    sysctl -p > /dev/null 2>&1
+
+    log "INFO" "IPv6 успешно отключен."
+    print_success "IPv6 успешно отключен."
+    
+    log "INFO" "Рекомендуется перезагрузить систему для полного применения изменений."
+    print_step "Рекомендуется перезагрузить систему для полного применения изменений."
+    
+    return 0
+}
+
+# Управление IPv6
+manage_ipv6() {
+    while true; do
+        print_header "Управление IPv6"
+        
+        # Проверяем текущий статус IPv6
+        if check_ipv6_status; then
+            echo -e "Текущий статус: ${GREEN}IPv6 включен${NC}"
+            echo
+            echo -e "1) ${YELLOW}Отключить IPv6${NC}"
+        else
+            echo -e "Текущий статус: ${RED}IPv6 отключен${NC}"
+            echo
+            echo -e "1) ${GREEN}Включить IPv6${NC}"
+        fi
+        
+        echo -e "0) ${BLUE}Вернуться в предыдущее меню${NC}"
+        echo
+        
+        read -p "Выберите действие [0-1]: " choice
+        
+        case $choice in
+            0)
+                return 0
+                ;;
+            1)
+                if check_ipv6_status; then
+                    disable_ipv6
+                else
+                    enable_ipv6
+                fi
+                ;;
+            *)
+                print_error "Неверный выбор"
+                ;;
+        esac
+        
+        echo
+        read -p "Нажмите Enter для продолжения..."
+    done
+}
+
+
+# Функция перезагрузки
+reboot_system() {
+    log "INFO" "Подготовка к перезагрузке системы..."
+    
+    # Проверка, запущен ли скрипт в интерактивном режиме
+    if tty -s; then
+        echo -e "${YELLOW}=== Перезагрузка системы ===${NC}"
+        echo "Все несохраненные данные будут потеряны."
+        read -p "Вы уверены, что хотите перезагрузить систему сейчас? (y/n): " confirm
+        
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            log "INFO" "Выполняется перезагрузка..."
+            print_success "Перезагрузка системы..."
+            shutdown -r now
+        else
+            log "INFO" "Перезагрузка отменена пользователем."
+            print_step "Перезагрузка отменена."
+        fi
+    else
+        log "WARNING" "Скрипт запущен в неинтерактивном режиме. Перезагрузка не может быть выполнена."
+        print_error "Невозможно выполнить перезагрузку в неинтерактивном режиме."
+    fi
+}
+
+
 # Главное меню
 show_menu() {
     while true; do
@@ -646,6 +827,10 @@ show_menu() {
         echo -e "$i) ${GREEN}Применить системные твики${NC}"
         ((i++))
         echo -e "$i) ${YELLOW}Выполнить все задачи автоматически${NC}"
+        ((i++))
+        echo -e "$i) ${YELLOW}Управление IPv6${NC}"
+        ((i++))
+        echo -e "$i) ${YELLOW}Перезагрузить систему${NC}"
         ((i++))
         echo -e "0) ${RED}Выход${NC}"
         echo
@@ -688,6 +873,12 @@ show_menu() {
                 configure_ssh
                 apply_system_tweaks
                 ;;
+            9)
+                manage_ipv6
+                ;;
+            10)
+                reboot_system
+                ;;
             *)
                 print_error "Неверный выбор"
                 ;;
@@ -697,6 +888,8 @@ show_menu() {
         read -p "Нажмите Enter для продолжения..."
     done
 }
+
+
 
 
 # Запуск главного меню
