@@ -22,9 +22,15 @@ GITHUB_RAW="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
 SCRIPT_VERSION="1.0.3"
 SCRIPT_NAME="server_launcher.sh"
 
-# Массив модулей с версиями
-declare -A MODULES
-MODULES=(
+# Определяем порядок модулей с помощью индексированного массива
+declare -a MODULE_ORDER=(
+    "ubuntu_pre_install.sh"
+    "install_xanmod.sh"
+    "bbr_info.sh"
+)
+
+# Ассоциативный массив с описаниями (как было раньше)
+declare -A MODULES=(
     ["ubuntu_pre_install.sh"]="Первоначальная настройка Ubuntu 24.04"
     ["install_xanmod.sh"]="Установка XanMod Kernel с BBR3"
     ["bbr_info.sh"]="Проверка и настройка конфигурации BBR"
@@ -164,15 +170,16 @@ show_main_menu() {
         print_header "SERVER SCRIPTS MANAGER v${SCRIPT_VERSION}"
         echo -e "${YELLOW}Выберите действие:${NC}"
         echo
+        
         local i=1
         
-        # Вывод доступных модулей
-        for module in "${!MODULES[@]}"; do
+        # Выводим модули в заданном порядке
+        for module in "${MODULE_ORDER[@]}"; do
             echo -e "$i) ${GREEN}${MODULES[$module]}${NC}"
             ((i++))
         done
         
-        # Системные опции
+        # Системные опции (остаются в конце)
         echo -e "$i) ${YELLOW}Обновить все модули${NC}"
         ((i++))
         echo -e "$i) ${YELLOW}Обновить launcher${NC}"
@@ -196,8 +203,7 @@ show_main_menu() {
                 ;;
             *)
                 if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -gt 0 ] && [ "$choice" -lt $((i-2)) ]; then
-                    local module_names=(${!MODULES[@]})
-                    run_module "${module_names[$((choice-1))]}"
+                    run_module "${MODULE_ORDER[$((choice-1))]}"
                 else
                     print_error "Неверный выбор"
                 fi

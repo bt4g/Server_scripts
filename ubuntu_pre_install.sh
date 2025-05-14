@@ -2,15 +2,40 @@
 set -e
 
 # Метаданные скрипта
-SCRIPT_VERSION="1.0.13"
-SCRIPT_DATE="2025-03-02 13:51:12"
+SCRIPT_VERSION="1.0.14"
+SCRIPT_DATE="2025-05-14 13:51:12"
 SCRIPT_AUTHOR="gopnikgame"
 
 # Цветовые коды
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
+
+print_header() {
+    local title="$1"
+    local width=50
+    local padding=$(( (width - ${#title}) / 2 ))
+    echo
+    echo -e "${BLUE}┌$( printf '─%.0s' $(seq 1 $width) )┐${NC}"
+    echo -e "${BLUE}│$( printf ' %.0s' $(seq 1 $padding) )${CYAN}$title$( printf ' %.0s' $(seq 1 $(( width - padding - ${#title} )) ) )${BLUE}│${NC}"
+    echo -e "${BLUE}└$( printf '─%.0s' $(seq 1 $width) )┘${NC}"
+    echo
+}
+
+print_step() {
+    echo -e "${YELLOW}➜${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}✔${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}✘${NC} $1"
+}
 
 # Константы
 BACKUP_DIR="/root/config_backup_$(date +%Y%m%d_%H%M%S)"
@@ -432,6 +457,83 @@ configure_firewall() {
     log "INFO" "UFW успешно настроен."
 }
 
+# Смена пароля root
+change_root_password() {
+    log "INFO" "Смена пароля пользователя root..."
+    
+    # Проверка, что команда passwd доступна
+    if ! command -v passwd &> /dev/null; then
+        log "ERROR" "Команда passwd не найдена. Невозможно сменить пароль."
+        return 1
+    fi
+    
+    echo -e "${YELLOW}=== Смена пароля пользователя root ===${NC}"
+    echo "ВНИМАНИЕ: Пароль не будет отображаться при вводе."
+    echo "Если вы планируете использовать только SSH-ключи, пароль можно сделать сложным."
+
+    # Запрашиваем новый пароль
+    local password_changed=0
+    local attempt=1
+    local max_attempts=3
+
+    while [ $password_changed -eq 0 ] && [ $attempt -le $max_attempts ]; do
+        echo ""
+        echo "Попытка $attempt из $max_attempts:"
+        
+        # Используем временный файл для смены пароля
+        temp_file=$(mktemp)
+        chmod 600 "$temp_file"
+        
+        read -s -p "Введите новый пароль: " password
+        echo ""
+        read -s -p "Повторите новый пароль: " password_confirm
+        echo ""
+        
+        if [ "$password" != "$password_confirm" ]; then
+            log "WARNING" "Пароли не совпадают. Попробуйте снова."
+            attempt=$((attempt+1))
+            continue
+        fi
+        
+        if [ -z "$password" ]; then
+            log "WARNING" "Пароль не может быть пустым. Попробуйте снова."
+            attempt=$((attempt+1))
+            continue
+        fi
+        
+        # Проверка сложности пароля
+        if [ ${#password} -lt 8 ]; then
+            echo -e "${YELLOW}Предупреждение: Пароль короче 8 символов.${NC}"
+            read -p "Продолжить со слабым паролем? (y/n): " confirm
+            if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                attempt=$((attempt+1))
+                continue
+            fi
+        fi
+        
+        # Меняем пароль
+        echo "root:$password" | chpasswd 2> "$temp_file"
+        
+        if [ $? -eq 0 ]; then
+            log "INFO" "Пароль пользователя root успешно изменен."
+            password_changed=1
+        else
+            log "ERROR" "Ошибка при смене пароля: $(cat "$temp_file")"
+            attempt=$((attempt+1))
+        fi
+        
+        rm -f "$temp_file"
+    done
+    
+    if [ $password_changed -eq 0 ]; then
+        log "ERROR" "Не удалось сменить пароль после $max_attempts попыток."
+        return 1
+    fi
+    
+    return 0
+}
+
+
 # Настройка SSH
 configure_ssh() {
     log "INFO" "Настройка безопасности SSH..."
@@ -521,38 +623,81 @@ EOF
 
 # Главное меню
 show_menu() {
-    clear
-    echo -e "${YELLOW}=== Главное меню ===${NC}"
-    echo "1. Установить зависимости и утилиты"
-    echo "2. Обновить систему"
-    echo "3. Настроить DNS"
-    echo "4. Настроить файрволл (UFW)"
-    echo "5. Настроить SSH"
-    echo "6. Применить системные твики"
-    echo "7. Выполнить все задачи автоматически"
-    echo "8. Выйти"
-    echo ""
-    read -p "Выберите пункт меню (1-8): " choice
+    while true; do
+        print_header "НАСТРОЙКА UBUNTU v${SCRIPT_VERSION}"
+        echo -e "${YELLOW}Выберите действие:${NC}"
+        echo
+        
+        local i=1
+        
+        # Выводим пункты меню
+        echo -e "$i) ${GREEN}Установить зависимости и утилиты${NC}"
+        ((i++))
+        echo -e "$i) ${GREEN}Обновить систему${NC}"
+        ((i++))
+        echo -e "$i) ${GREEN}Настроить DNS${NC}"
+        ((i++))
+        echo -e "$i) ${GREEN}Настроить файрволл (UFW)${NC}"
+        ((i++))
+        echo -e "$i) ${GREEN}Сменить пароль root${NC}"
+        ((i++))
+        echo -e "$i) ${GREEN}Настроить SSH${NC}"
+        ((i++))
+        echo -e "$i) ${GREEN}Применить системные твики${NC}"
+        ((i++))
+        echo -e "$i) ${YELLOW}Выполнить все задачи автоматически${NC}"
+        ((i++))
+        echo -e "0) ${RED}Выход${NC}"
+        echo
+        
+        read -p "Выберите опцию [0-$((i-1))]: " choice
+        echo
 
-    case "$choice" in
-        1) install_dependencies ;;
-        2) update_system ;;
-        3) configure_dns ;;
-        4) configure_firewall ;;
-        5) configure_ssh ;;
-        6) apply_system_tweaks ;;
-        7) 
-            install_dependencies
-            update_system
-            configure_dns
-            configure_firewall
-            configure_ssh
-            apply_system_tweaks
-            ;;
-        8) exit 0 ;;
-        *) echo -e "${RED}Неверный выбор. Попробуйте снова.${NC}" ; sleep 2 ; show_menu ;;
-    esac
+        case $choice in
+            0)
+                print_success "До свидания!"
+                exit 0
+                ;;
+            1)
+                install_dependencies
+                ;;
+            2)
+                update_system
+                ;;
+            3)
+                configure_dns
+                ;;
+            4)
+                configure_firewall
+                ;;
+            5)
+                change_root_password
+                ;;
+            6)
+                configure_ssh
+                ;;
+            7)
+                apply_system_tweaks
+                ;;
+            8)
+                install_dependencies
+                update_system
+                configure_dns
+                configure_firewall
+                change_root_password
+                configure_ssh
+                apply_system_tweaks
+                ;;
+            *)
+                print_error "Неверный выбор"
+                ;;
+        esac
+        
+        echo
+        read -p "Нажмите Enter для продолжения..."
+    done
 }
+
 
 # Запуск главного меню
 show_menu
