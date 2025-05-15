@@ -510,6 +510,33 @@ EOF
 configure_firewall() {
     log "INFO" "Настройка UFW..."
 
+    # Сброс существующих правил UFW
+    log "INFO" "Сброс существующих правил UFW..."
+    print_step "Сброс правил UFW..."
+    
+    # Проверка статуса UFW
+    if ufw status | grep -q "Status: active"; then
+        log "INFO" "UFW активен, отключаем перед сбросом правил..."
+        yes | ufw disable >/dev/null 2>&1
+    fi
+    
+    # Сброс всех правил
+    log "INFO" "Сброс правил UFW до настроек по умолчанию..."
+    ufw --force reset >/dev/null 2>&1
+    print_success "Правила UFW сброшены"
+    
+    # Создание резервной копии конфигурации UFW
+    if [ -d "/etc/ufw" ]; then
+        for ufw_config in /etc/ufw/user*.rules; do
+            if [ -f "$ufw_config" ]; then
+                backup_file "$ufw_config"
+            fi
+        done
+        if [ -f "/etc/ufw/ufw.conf" ]; then
+            backup_file "/etc/ufw/ufw.conf"
+        fi
+    fi
+
     # Блокировка IP-адресов из AS61280 (IPv4 и IPv6)
     log "INFO" "Получение списка IP-адресов для блокировки (AS61280)..."
     blocked_ips=$(whois -h whois.radb.net -- '-i origin AS61280' | grep -E '^route|^route6' | awk '{print $2}')
@@ -526,12 +553,186 @@ configure_firewall() {
     # Основные правила UFW
     ufw default deny incoming
     ufw default allow outgoing
-    ufw allow ssh
-    ufw allow 80/tcp
+    
+    # Порт 443 (HTTPS) открыт по умолчанию
     ufw allow 443/tcp
+    log "INFO" "Открыт порт 443 (HTTPS)"
+    
+    # Спрашиваем пользователя о порте 80 (HTTP)
+    echo -e "\n${YELLOW}=== Настройка порта 80 (HTTP) ===${NC}"
+    read -p "Открыть порт 80 (HTTP)? [y/n]: " open_http
+    if [[ "$open_http" =~ ^[Yy]$ ]]; then
+        ufw allow 80/tcp
+        log "INFO" "Открыт порт 80 (HTTP)"
+    else
+        log "INFO" "Порт 80 (HTTP) не будет открыт"
+    fi
+    
+    # Настройка доступа к SSH
+    echo -e "\n${YELLOW}=== Настройка доступа к SSH ===${NC}"
+    read -p "Настроить SSH только для определенных IP-адресов? [y/n]: " restrict_ssh
+    if [[ "$restrict_ssh" =~ ^[Yy]$ ]]; then
+        log "INFO" "Настройка доступа к SSH для определенных IP-адресов"
+        ssh_allowed_ips=()
+        
+        echo "Введите IP-адреса для доступа к SSH (оставьте поле пустым и нажмите Enter для завершения):"
+        while true; do
+            # Отображаем текущий список IP-адресов
+            if [ ${#ssh_allowed_ips[@]} -gt 0 ]; then
+                echo -e "${CYAN}Добавленные IP-адреса: ${ssh_allowed_ips[*]}${NC}"
+            fi
+            
+            read -p "IP-адрес для SSH: " ip_addr
+            
+            # Проверка, пустой ли ввод
+            if [ -z "$ip_addr" ]; then
+                if [ ${#ssh_allowed_ips[@]} -eq 0 ]; then
+                    # Список пуст, просто выходим
+                    log "INFO" "IP-адреса для SSH не указаны, порт 22 будет открыт для всех"
+                    ufw allow 22/tcp
+                    break
+                else
+                    # Список не пуст, спрашиваем о завершении
+                    read -p "Вы закончили вводить IP-адреса? [y/n]: " done_adding
+                    if [[ "$done_adding" =~ ^[Yy]$ ]]; then
+                        break
+                    fi
+                fi
+            elif [[ "$ip_addr" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+                # Базовая валидация IP-адреса
+                ssh_allowed_ips+=("$ip_addr")
+                log "INFO" "Добавлен IP-адрес для SSH: $ip_addr"
+            else
+                print_error "Некорректный формат IP-адреса"
+            fi
+        done
+        
+        # Применяем правила для SSH если есть IP-адреса
+        if [ ${#ssh_allowed_ips[@]} -gt 0 ]; then
+            log "INFO" "Настройка правил SSH для указанных IP-адресов"
+            for ip in "${ssh_allowed_ips[@]}"; do
+                ufw allow from "$ip" to any port 22 proto tcp
+                log "INFO" "Разрешен доступ к SSH для IP: $ip"
+            done
+        fi
+    else
+        # Открываем SSH для всех
+        ufw allow 22/tcp
+        log "INFO" "Порт 22 (SSH) открыт для всех"
+    fi
+    
+    # Настройка пользовательских портов
+    echo -e "\n${YELLOW}=== Настройка пользовательских портов ===${NC}"
+    read -p "Настроить дополнительные порты? [y/n]: " custom_ports
+    if [[ "$custom_ports" =~ ^[Yy]$ ]]; then
+        log "INFO" "Настройка дополнительных портов"
+        custom_port_list=()
+        
+        echo "Введите номера портов для открытия (оставьте поле пустым и нажмите Enter для завершения):"
+        while true; do
+            # Отображаем текущий список портов
+            if [ ${#custom_port_list[@]} -gt 0 ]; then
+                echo -e "${CYAN}Добавленные порты: ${custom_port_list[*]}${NC}"
+            fi
+            
+            read -p "Номер порта: " port_num
+            
+            # Проверка, пустой ли ввод
+            if [ -z "$port_num" ]; then
+                if [ ${#custom_port_list[@]} -eq 0 ]; then
+                    # Список пуст, просто выходим
+                    log "INFO" "Дополнительные порты не указаны"
+                    break
+                else
+                    # Список не пуст, спрашиваем о завершении
+                    read -p "Вы закончили вводить порты? [y/n]: " done_ports
+                    if [[ "$done_ports" =~ ^[Yy]$ ]]; then
+                        break
+                    fi
+                fi
+            elif [[ "$port_num" =~ ^[0-9]+$ ]] && [ "$port_num" -ge 1 ] && [ "$port_num" -le 65535 ]; then
+                # Валидный номер порта
+                custom_port_list+=("$port_num")
+                log "INFO" "Добавлен порт: $port_num"
+            else
+                print_error "Некорректный номер порта (должен быть от 1 до 65535)"
+            fi
+        done
+        
+        # Если есть порты для настройки
+        if [ ${#custom_port_list[@]} -gt 0 ]; then
+            # Спрашиваем о настройке доступа по IP
+            echo -e "\n${YELLOW}Настройка доступа к пользовательским портам${NC}"
+            read -p "Ограничить доступ к пользовательским портам по IP? [y/n]: " restrict_custom_ports
+            
+            if [[ "$restrict_custom_ports" =~ ^[Yy]$ ]]; then
+                # Ограничение по IP
+                custom_ip_list=()
+                
+                echo "Введите IP-адреса для доступа к пользовательским портам (оставьте поле пустым для завершения):"
+                while true; do
+                    # Отображаем текущий список IP
+                    if [ ${#custom_ip_list[@]} -gt 0 ]; then
+                        echo -e "${CYAN}Добавленные IP-адреса: ${custom_ip_list[*]}${NC}"
+                    fi
+                    
+                    read -p "IP-адрес: " custom_ip
+                    
+                    # Проверка, пустой ли ввод
+                    if [ -z "$custom_ip" ]; then
+                        if [ ${#custom_ip_list[@]} -eq 0 ]; then
+                            # Список пуст, выходим и будем открывать порты для всех
+                            log "INFO" "IP-адреса для пользовательских портов не указаны, порты будут открыты для всех"
+                            for port in "${custom_port_list[@]}"; do
+                                ufw allow "$port/tcp"
+                                log "INFO" "Открыт порт $port/tcp для всех"
+                            done
+                            break
+                        else
+                            # Список не пуст, спрашиваем о завершении
+                            read -p "Вы закончили вводить IP-адреса? [y/n]: " done_ips
+                            if [[ "$done_ips" =~ ^[Yy]$ ]]; then
+                                # Применяем правила для каждого порта и IP
+                                for port in "${custom_port_list[@]}"; do
+                                    for ip in "${custom_ip_list[@]}"; do
+                                        ufw allow from "$ip" to any port "$port" proto tcp
+                                        log "INFO" "Разрешен доступ к порту $port/tcp для IP: $ip"
+                                    done
+                                done
+                                break
+                            fi
+                        fi
+                    elif [[ "$custom_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+                        # Валидный IP
+                        custom_ip_list+=("$custom_ip")
+                        log "INFO" "Добавлен IP-адрес для пользовательских портов: $custom_ip"
+                    else
+                        print_error "Некорректный формат IP-адреса"
+                    fi
+                done
+            else
+                # Открываем порты для всех
+                for port in "${custom_port_list[@]}"; do
+                    ufw allow "$port/tcp"
+                    log "INFO" "Открыт порт $port/tcp для всех"
+                done
+            fi
+        fi
+    fi
+
+    # Активация UFW
+    echo -e "\n${YELLOW}=== Активация файрволла UFW ===${NC}"
+    print_step "Активация UFW..."
     yes | ufw enable
-    log "INFO" "UFW успешно настроен."
+    log "INFO" "UFW успешно настроен и активирован."
+    print_success "UFW успешно настроен."
+    
+    # Вывод статуса UFW
+    echo -e "\n${YELLOW}=== Текущие правила UFW ===${NC}"
+    ufw status numbered
 }
+
+
 
 # Смена пароля root
 change_root_password() {
