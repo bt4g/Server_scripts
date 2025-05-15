@@ -448,6 +448,7 @@ EOF
         echo "=================================" >> "$LOG_FILE"
     fi
 }
+
 # Настройка файрволла (UFW)
 configure_firewall() {
     log "INFO" "Настройка UFW..."
