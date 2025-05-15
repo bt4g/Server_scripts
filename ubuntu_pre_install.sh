@@ -195,6 +195,13 @@ configure_dns() {
         ["Google"]="8.8.8.8#dns.google 8.8.4.4#dns.google"
         ["Cloudflare"]="1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com"
         ["AdGuard"]="94.140.14.14#dns.adguard.com 94.140.15.15#dns.adguard.com"
+        ["Quad9"]="9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net"
+        ["OpenDNS"]="208.67.222.222#dns.opendns.com 208.67.220.220#dns.opendns.com"
+        ["CleanBrowsing"]="185.228.168.9#doh.cleanbrowsing.org 185.228.169.9#doh.cleanbrowsing.org"
+        ["NextDNS"]="45.90.28.0#nextdns.io 45.90.30.0#nextdns.io"
+        ["ControlD"]="76.76.2.0#controld.com 76.76.10.0#controld.com"
+        ["Alternate DNS"]="76.76.19.19#alternate-dns.com 76.223.122.150#alternate-dns.com"
+        ["UncensoredDNS"]="91.239.100.100#anycast.censurfridns.dk 89.233.43.71#unicast.censurfridns.dk"
     )
 
     # Показать пользователю меню выбора DNS
@@ -202,8 +209,15 @@ configure_dns() {
     echo "1. Google DNS      (8.8.8.8, 8.8.4.4)"
     echo "2. Cloudflare DNS  (1.1.1.1, 1.0.0.1)"
     echo "3. AdGuard DNS     (94.140.14.14, 94.140.15.15)"
+    echo "4. Quad9 DNS       (9.9.9.9, 149.112.112.112)"
+    echo "5. OpenDNS         (208.67.222.222, 208.67.220.220)"
+    echo "6. CleanBrowsing   (185.228.168.9, 185.228.169.9)"
+    echo "7. NextDNS         (45.90.28.0, 45.90.30.0)"
+    echo "8. ControlD        (76.76.2.0, 76.76.10.0)"
+    echo "9. Alternate DNS   (76.76.19.19, 76.223.122.150)"
+    echo "10. UncensoredDNS  (91.239.100.100, 89.233.43.71)"
     echo ""
-    read -p "Выберите основной DNS провайдер [1-3, по умолчанию 1]: " dns_choice
+    read -p "Выберите основной DNS провайдер [1-10, по умолчанию 1]: " dns_choice
 
     # Определение основного и резервных DNS на основе выбора
     local primary_dns
@@ -222,6 +236,48 @@ configure_dns() {
             fallback_dns1="${DNS_PROVIDERS["Google"]}"
             fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
             log "INFO" "Выбран AdGuard DNS в качестве основного."
+            ;;
+        4)  # Quad9 как основной
+            primary_dns="${DNS_PROVIDERS["Quad9"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
+            log "INFO" "Выбран Quad9 DNS в качестве основного."
+            ;;
+        5)  # OpenDNS как основной
+            primary_dns="${DNS_PROVIDERS["OpenDNS"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
+            log "INFO" "Выбран OpenDNS в качестве основного."
+            ;;
+        6)  # CleanBrowsing как основной
+            primary_dns="${DNS_PROVIDERS["CleanBrowsing"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
+            log "INFO" "Выбран CleanBrowsing DNS в качестве основного."
+            ;;
+        7)  # NextDNS как основной
+            primary_dns="${DNS_PROVIDERS["NextDNS"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
+            log "INFO" "Выбран NextDNS в качестве основного."
+            ;;
+        8)  # ControlD как основной
+            primary_dns="${DNS_PROVIDERS["ControlD"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
+            log "INFO" "Выбран ControlD DNS в качестве основного."
+            ;;
+        9)  # Alternate DNS как основной
+            primary_dns="${DNS_PROVIDERS["Alternate DNS"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
+            log "INFO" "Выбран Alternate DNS в качестве основного."
+            ;;
+        10) # UncensoredDNS как основной
+            primary_dns="${DNS_PROVIDERS["UncensoredDNS"]}"
+            fallback_dns1="${DNS_PROVIDERS["Google"]}"
+            fallback_dns2="${DNS_PROVIDERS["Cloudflare"]}"
+            log "INFO" "Выбран UncensoredDNS в качестве основного."
             ;;
         *)  # Google как основной (по умолчанию)
             primary_dns="${DNS_PROVIDERS["Google"]}"
@@ -448,6 +504,7 @@ EOF
         echo "=================================" >> "$LOG_FILE"
     fi
 }
+
 
 # Настройка файрволла (UFW)
 configure_firewall() {

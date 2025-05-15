@@ -19,7 +19,7 @@ SCRIPT_DIR="/root/server-scripts"
 MODULES_DIR="/usr/local/server-scripts/modules"
 LOG_DIR="/var/log/server-scripts"
 GITHUB_RAW="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="1.0.4"
 SCRIPT_NAME="server_launcher.sh"
 
 # Определяем порядок модулей с помощью индексированного массива
@@ -27,6 +27,7 @@ declare -a MODULE_ORDER=(
     "ubuntu_pre_install.sh"
     "install_xanmod.sh"
     "bbr_info.sh"
+    "speed_dns.sh"
 )
 
 # Ассоциативный массив с описаниями (как было раньше)
@@ -34,6 +35,7 @@ declare -A MODULES=(
     ["ubuntu_pre_install.sh"]="Первоначальная настройка Ubuntu 24.04"
     ["install_xanmod.sh"]="Установка XanMod Kernel с BBR3"
     ["bbr_info.sh"]="Проверка и настройка конфигурации BBR"
+    ["speed_dns.sh"]="Проверка DNS"
 )
 
 # Функции для красивого вывода
