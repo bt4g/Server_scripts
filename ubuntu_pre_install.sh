@@ -295,6 +295,16 @@ configure_dns() {
         echo -e "${CYAN}DNSSEC:${NC}          $current_dnssec"
         echo -e "${CYAN}DNS-over-TLS:${NC}    $current_dnstls"
         echo
+        
+        # Возвращаем статус кеширования
+        case "$current_caching" in
+            "Включено"*) 
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
     }
     
     # Проверяем среду выполнения
@@ -315,8 +325,9 @@ configure_dns() {
         backup_file "/etc/systemd/resolved.conf"
     fi
 
-    # Отображение текущих настроек DNS
-    get_current_dns_settings
+    # Отображение текущих настроек DNS и проверка кеширования
+    local cache_was_enabled=0
+    get_current_dns_settings && cache_was_enabled=1
 
     # Объявление массивов DNS-серверов (убраны неработоспособные)
     declare -A DNS_PROVIDERS
@@ -573,6 +584,28 @@ EOF
         fi
     fi
 
+    # Если кеширование было включено ранее, сбрасываем кеш
+    if [ $cache_was_enabled -eq 1 ]; then
+        log "INFO" "Был обнаружен ранее включенный DNS-кеш, сбрасываем его..."
+        print_step "Сброс DNS-кеша..."
+        
+        # Попытка сброса кеша через systemd-resolve (для старых версий)
+        if command -v systemd-resolve &> /dev/null; then
+            systemd-resolve --flush-caches &>/dev/null || true
+            log "INFO" "Выполнен сброс DNS-кеша через systemd-resolve"
+        fi
+        
+        # Попытка сброса кеша через resolvectl (для новых версий)
+        if command -v resolvectl &> /dev/null; then
+            resolvectl flush-caches &>/dev/null || true
+            log "INFO" "Выполнен сброс DNS-кеша через resolvectl"
+        fi
+        
+        print_success "Кеш DNS успешно сброшен"
+    else
+        log "INFO" "Кеширование DNS ранее не было включено, сброс кеша не требуется"
+    fi
+    
     # Перезапуск службы DNS
     log "INFO" "Перезапуск systemd-resolved..."
     systemctl restart systemd-resolved || true
