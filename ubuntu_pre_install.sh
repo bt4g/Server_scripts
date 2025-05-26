@@ -123,7 +123,7 @@ install_dependencies_and_update_system() {
         unzip tar vim tmux screen
         rsync ncdu dnsutils resolvconf
         whois ufw openssh-server
-        mtr # Добавлен инструмент MTR для трассировки маршрутов
+        mtr
     )
     
     # Обновление списка пакетов
@@ -193,7 +193,7 @@ install_dependencies_and_update_system() {
         fi
     done
     
-    echo  # Пустая строка для лучшей читаемости
+    echo 
     return 0
 }
 
@@ -640,114 +640,24 @@ restore_dns() {
     log "INFO" "Восстановление настроек DNS..."
     print_header "Восстановление настроек DNS"
 
-    # Проверка наличия резервных копий
-    local backup_found=0
-    local backup_resolved=""
-    local backup_resolv=""
+    # Поиск всех резервных копий
+    local backup_dirs=()
+    local other_backups=$(find /root -maxdepth 1 -type d -name "config_backup_*" | sort -r)
     
-    # Поиск в текущей директории резервных копий
-    if [ -f "$BACKUP_DIR/resolved.conf" ]; then
-        backup_resolved="$BACKUP_DIR/resolved.conf"
-        backup_found=1
-        log "INFO" "Найдена резервная копия resolved.conf в текущей сессии."
+    # Добавляем текущую директорию, если она содержит резервные копии
+    if [ -f "$BACKUP_DIR/resolved.conf" ] || [ -f "$BACKUP_DIR/resolv.conf" ]; then
+        backup_dirs+=("$BACKUP_DIR")
     fi
     
-    if [ -f "$BACKUP_DIR/resolv.conf" ]; then
-        backup_resolv="$BACKUP_DIR/resolv.conf"
-        backup_found=1
-        log "INFO" "Найдена резервная копия resolv.conf в текущей сессии."
-    fi
-    
-    # Если в текущем бэкапе не найдены файлы, ищем в других каталогах бэкапа
-    if [ $backup_found -eq 0 ]; then
-        log "INFO" "Поиск резервных копий в других директориях..."
-        
-        # Поиск других каталогов бэкапа
-        local other_backups=$(find /root -maxdepth 1 -type d -name "config_backup_*" | sort -r)
-        
-        for backup_dir in $other_backups; do
-            if [ -f "$backup_dir/resolved.conf" ] && [ -z "$backup_resolved" ]; then
-                backup_resolved="$backup_dir/resolved.conf"
-                backup_found=1
-                log "INFO" "Найдена резервная копия resolved.conf в каталоге $backup_dir."
-            fi
-            
-            if [ -f "$backup_dir/resolv.conf" ] && [ -z "$backup_resolv" ]; then
-                backup_resolv="$backup_dir/resolv.conf"
-                backup_found=1
-                log "INFO" "Найдена резервная копия resolv.conf в каталоге $backup_dir."
-            fi
-            
-            # Если обе копии найдены, выходим из цикла
-            if [ -n "$backup_resolved" ] && [ -n "$backup_resolv" ]; then
-                break
-            fi
-        done
-    fi
-    
-    # Восстановление или создание настроек DNS
-    if [ $backup_found -eq 1 ]; then
-        print_step "Восстановление из резервных копий..."
-        
-        # Восстановление resolved.conf
-        if [ -n "$backup_resolved" ]; then
-            cp "$backup_resolved" /etc/systemd/resolved.conf
-            log "INFO" "Восстановлен файл /etc/systemd/resolved.conf из резервной копии."
-            print_success "Восстановлен файл /etc/systemd/resolved.conf."
-        else
-            # Создание resolved.conf по умолчанию
-            cat > /etc/systemd/resolved.conf << EOF
-[Resolve]
-# DNS по умолчанию - Cloudflare DNS
-DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com
-FallbackDNS=8.8.8.8#dns.google 8.8.4.4#dns.google
-Domains=~.
-DNSOverTLS=yes
-DNSSEC=yes
-
-# Кеширование DNS
-Cache=yes
-CacheFromLocalhost=yes
-DNSStubListener=yes
-EOF
-            log "INFO" "Создан файл /etc/systemd/resolved.conf с настройками по умолчанию."
-            print_success "Создан файл /etc/systemd/resolved.conf с настройками по умолчанию."
+    # Добавляем другие каталоги с резервными копиями
+    for backup_dir in $other_backups; do
+        if [ "$backup_dir" != "$BACKUP_DIR" ] && ([ -f "$backup_dir/resolved.conf" ] || [ -f "$backup_dir/resolv.conf" ]); then
+            backup_dirs+=("$backup_dir")
         fi
-        
-        # Восстановление resolv.conf
-        if [ -n "$backup_resolv" ]; then
-            # Проверяем, есть ли immutable бит
-            if command -v lsattr >/dev/null 2>&1; then
-                lsattr_output=$(lsattr /etc/resolv.conf 2>/dev/null || echo "")
-                if echo "$lsattr_output" | grep -q "i"; then
-                    log "INFO" "Снятие immutable бита с /etc/resolv.conf..."
-                    chattr -i /etc/resolv.conf 2>/dev/null || true
-                fi
-            fi
-            
-            # Удаление существующего файла или символической ссылки
-            if [ -L "/etc/resolv.conf" ]; then
-                rm -f "/etc/resolv.conf" 2>/dev/null || true
-                log "INFO" "Удалена символическая ссылка /etc/resolv.conf."
-            elif [ -f "/etc/resolv.conf" ]; then
-                rm -f "/etc/resolv.conf" 2>/dev/null || true
-                log "INFO" "Удален файл /etc/resolv.conf."
-            fi
-            
-            # Копирование резервной копии
-            cp "$backup_resolv" /etc/resolv.conf
-            log "INFO" "Восстановлен файл /etc/resolv.conf из резервной копии."
-            print_success "Восстановлен файл /etc/resolv.conf."
-        else
-            # Создание символической ссылки на systemd-resolved
-            if [ ! -L "/etc/resolv.conf" ]; then
-                rm -f "/etc/resolv.conf" 2>/dev/null || true
-                ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-                log "INFO" "Создана символическая ссылка на системный resolver."
-                print_success "Создана символическая ссылка на системный resolver."
-            fi
-        fi
-    else
+    done
+    
+    # Проверяем наличие резервных копий
+    if [ ${#backup_dirs[@]} -eq 0 ]; then
         print_step "Резервные копии не найдены. Создание настроек DNS по умолчанию..."
         
         # Создание resolved.conf по умолчанию
@@ -803,14 +713,201 @@ EOF
             log "INFO" "Создан файл /etc/resolv.conf с настройками Cloudflare DNS."
             print_success "Создан файл /etc/resolv.conf с настройками Cloudflare DNS."
         fi
+        
+        # Перезапуск службы DNS
+        systemctl restart systemd-resolved || true
+        log "INFO" "Служба systemd-resolved перезапущена."
+        print_step "Служба systemd-resolved перезапущена."
+        
+        # Проверка работы DNS
+        check_dns_operation
+        return 0
     fi
+    
+    # Если найдена только одна резервная копия
+    if [ ${#backup_dirs[@]} -eq 1 ]; then
+        local selected_backup=${backup_dirs[0]}
+        local backup_date=$(echo "$selected_backup" | grep -oE '[0-9]{8}_[0-9]{6}' || echo "Неизвестная дата")
+        local formatted_date=$(date -d "${backup_date:0:8} ${backup_date:9:2}:${backup_date:11:2}:${backup_date:13:2}" '+%d.%m.%Y %H:%M:%S' 2>/dev/null || echo "Неизвестная дата")
+        
+        print_step "Найдена одна резервная копия от $formatted_date"
+        
+        # Показываем содержимое файлов
+        show_backup_content "$selected_backup"
+        
+        # Спрашиваем пользователя о восстановлении
+        read -p "Восстановить эту резервную копию? [y/n]: " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            restore_from_backup "$selected_backup"
+        else
+            log "INFO" "Восстановление отменено пользователем."
+            print_step "Восстановление отменено."
+            return 0
+        fi
+    else
+        # Если найдено несколько резервных копий
+        print_step "Найдено ${#backup_dirs[@]} резервных копий настроек DNS"
+        
+        while true; do
+            echo -e "\n${YELLOW}=== Список доступных резервных копий ===${NC}"
+            
+            # Выводим список резервных копий с датами
+            for i in "${!backup_dirs[@]}"; do
+                local backup_dir=${backup_dirs[$i]}
+                local backup_date=$(echo "$backup_dir" | grep -oE '[0-9]{8}_[0-9]{6}' || echo "Неизвестная дата")
+                local formatted_date=$(date -d "${backup_date:0:8} ${backup_date:9:2}:${backup_date:11:2}:${backup_date:13:2}" '+%d.%m.%Y %H:%M:%S' 2>/dev/null || echo "Неизвестная дата")
+                
+                # Проверяем наличие файлов
+                local files=""
+                [ -f "$backup_dir/resolved.conf" ] && files+="resolved.conf "
+                [ -f "$backup_dir/resolv.conf" ] && files+="resolv.conf"
+                
+                echo -e "$((i+1)). ${CYAN}Копия от${NC} ${GREEN}$formatted_date${NC} ${CYAN}(файлы: $files)${NC}"
+            done
+            
+            echo -e "0. ${YELLOW}Отмена (возврат в предыдущее меню)${NC}"
+            echo
+            
+            # Запрашиваем выбор пользователя
+            read -p "Выберите резервную копию для восстановления [0-${#backup_dirs[@]}]: " choice
+            
+            # Проверяем выбор
+            if [ "$choice" = "0" ]; then
+                log "INFO" "Восстановление отменено пользователем."
+                print_step "Восстановление отменено."
+                return 0
+            elif [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#backup_dirs[@]} ]; then
+                local selected_backup=${backup_dirs[$((choice-1))]}
+                
+                # Показываем содержимое файлов выбранной копии
+                show_backup_content "$selected_backup"
+                
+                # Спрашиваем о подтверждении восстановления
+                read -p "Восстановить эту резервную копию? [y/n]: " confirm
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                    restore_from_backup "$selected_backup"
+                    break
+                else
+                    log "INFO" "Выберите другую резервную копию или отмените восстановление."
+                fi
+            else
+                print_error "Некорректный выбор"
+            fi
+        done
+    fi
+}
 
+# Вспомогательная функция для показа содержимого файлов резервной копии
+show_backup_content() {
+    local backup_dir="$1"
+    
+    echo -e "\n${YELLOW}=== Содержимое резервной копии ===${NC}"
+    
+    # Показываем содержимое resolved.conf, если он существует
+    if [ -f "$backup_dir/resolved.conf" ]; then
+        echo -e "\n${CYAN}Файл${NC} ${GREEN}resolved.conf${NC}:"
+        echo -e "${BLUE}--------------------------------${NC}"
+        cat "$backup_dir/resolved.conf"
+        echo -e "${BLUE}--------------------------------${NC}"
+    else
+        echo -e "${YELLOW}Файл resolved.conf отсутствует в резервной копии.${NC}"
+    fi
+    
+    # Показываем содержимое resolv.conf, если он существует
+    if [ -f "$backup_dir/resolv.conf" ]; then
+        echo -e "\n${CYAN}Файл${NC} ${GREEN}resolv.conf${NC}:"
+        echo -e "${BLUE}--------------------------------${NC}"
+        cat "$backup_dir/resolv.conf"
+        echo -e "${BLUE}--------------------------------${NC}"
+    else
+        echo -e "${YELLOW}Файл resolv.conf отсутствует в резервной копии.${NC}"
+    fi
+    
+    echo
+}
+
+# Вспомогательная функция для восстановления из выбранной резервной копии
+restore_from_backup() {
+    local backup_dir="$1"
+    local backup_resolved=""
+    local backup_resolv=""
+    
+    # Проверяем наличие файлов в выбранной копии
+    [ -f "$backup_dir/resolved.conf" ] && backup_resolved="$backup_dir/resolved.conf"
+    [ -f "$backup_dir/resolv.conf" ] && backup_resolv="$backup_dir/resolv.conf"
+    
+    print_step "Восстановление из выбранной резервной копии..."
+    
+    # Восстановление resolved.conf
+    if [ -n "$backup_resolved" ]; then
+        cp "$backup_resolved" /etc/systemd/resolved.conf
+        log "INFO" "Восстановлен файл /etc/systemd/resolved.conf из резервной копии."
+        print_success "Восстановлен файл /etc/systemd/resolved.conf."
+    else
+        # Создание resolved.conf по умолчанию
+        cat > /etc/systemd/resolved.conf << EOF
+[Resolve]
+# DNS по умолчанию - Cloudflare DNS
+DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com
+FallbackDNS=8.8.8.8#dns.google 8.8.4.4#dns.google
+Domains=~.
+DNSOverTLS=yes
+DNSSEC=yes
+
+# Кеширование DNS
+Cache=yes
+CacheFromLocalhost=yes
+DNSStubListener=yes
+EOF
+        log "INFO" "Создан файл /etc/systemd/resolved.conf с настройками по умолчанию."
+        print_success "Создан файл /etc/systemd/resolved.conf с настройками по умолчанию."
+    fi
+    
+    # Восстановление resolv.conf
+    if [ -n "$backup_resolv" ]; then
+        # Проверяем, есть ли immutable бит
+        if command -v lsattr >/dev/null 2>&1; then
+            lsattr_output=$(lsattr /etc/resolv.conf 2>/dev/null || echo "")
+            if echo "$lsattr_output" | grep -q "i"; then
+                log "INFO" "Снятие immutable бита с /etc/resolv.conf..."
+                chattr -i /etc/resolv.conf 2>/dev/null || true
+            fi
+        fi
+        
+        # Удаление существующего файла или символической ссылки
+        if [ -L "/etc/resolv.conf" ]; then
+            rm -f "/etc/resolv.conf" 2>/dev/null || true
+            log "INFO" "Удалена символическая ссылка /etc/resolv.conf."
+        elif [ -f "/etc/resolv.conf" ]; then
+            rm -f "/etc/resolv.conf" 2>/dev/null || true
+            log "INFO" "Удален файл /etc/resolv.conf."
+        fi
+        
+        # Копирование резервной копии
+        cp "$backup_resolv" /etc/resolv.conf
+        log "INFO" "Восстановлен файл /etc/resolv.conf из резервной копии."
+        print_success "Восстановлен файл /etc/resolv.conf."
+    else
+        # Создание символической ссылки на systemd-resolved
+        if [ ! -L "/etc/resolv.conf" ]; then
+            rm -f "/etc/resolv.conf" 2>/dev/null || true
+            ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+            log "INFO" "Создана символическая ссылка на системный resolver."
+            print_success "Создана символическая ссылка на системный resolver."
+        fi
+    fi
+    
     # Перезапуск службы DNS
     systemctl restart systemd-resolved || true
     log "INFO" "Служба systemd-resolved перезапущена."
     print_step "Служба systemd-resolved перезапущена."
     
     # Проверка работы DNS
+    check_dns_operation
+}
+
+# Вспомогательная функция для проверки работы DNS после восстановления
+check_dns_operation() {
     log "INFO" "Проверка работы DNS..."
     if host google.com > /dev/null 2>&1; then
         log "INFO" "✓ DNS работает корректно."
