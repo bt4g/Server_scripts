@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Version: 1.1.1
+# Version: 1.1.0
 # Author: gopnikgame
 # Created: 2025-02-15 18:03:59 UTC
-# Last Modified: 2025-06-11 14:35:00 UTC
+# Last Modified: 2025-06-11 13:35:00 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # Константы
-readonly SCRIPT_VERSION="1.1.1"
+readonly SCRIPT_VERSION="1.1.0"
 readonly SCRIPT_AUTHOR="gopnikgame"
 readonly STATE_FILE="/var/tmp/xanmod_install_state"
 readonly LOG_FILE="/var/log/xanmod_install.log"
@@ -146,9 +146,7 @@ get_psabi_version() {
     flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2 | tr -d ' \n\t\r')
     
     if [[ $flags =~ avx512 ]]; then 
-        # Для AVX-512 используем v3, так как v4 не поддерживается в XanMod
-        level=3
-        log "Обнаружена поддержка AVX-512, но будет использована оптимизация x64v3 (максимальная поддерживаемая)"
+        level=4
     elif [[ $flags =~ avx2 ]]; then 
         level=3
     elif [[ $flags =~ sse4_2 ]]; then 
@@ -238,24 +236,6 @@ install_kernel() {
 
     echo -e "\n\033[1;33mУстановка пакета: ${KERNEL_PACKAGE}\033[0m"
     apt-get update -qq
-
-    # Проверка доступности пакета
-    if ! apt-cache show "$KERNEL_PACKAGE" &>/dev/null; then
-        log_error "Пакет $KERNEL_PACKAGE недоступен в репозитории"
-        
-        # Попытка использовать v3 для всех версий
-        if [[ "$KERNEL_PACKAGE" == *"-x64v4"* ]]; then
-            KERNEL_PACKAGE="${KERNEL_PACKAGE/x64v4/x64v3}"
-            log "Попытка установить $KERNEL_PACKAGE вместо недоступной версии..."
-            
-            if ! apt-cache show "$KERNEL_PACKAGE" &>/dev/null; then
-                log_error "Пакет $KERNEL_PACKAGE также недоступен"
-                exit 1
-            fi
-        else
-            exit 1
-        fi
-    fi
 
     # Настройка параметров загрузки для BBR3
     log "Настройка параметров загрузки ядра..."
