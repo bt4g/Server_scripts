@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Version: 1.0.0
+# Version: 1.1.0
 # Author: gopnikgame
 # Created: 2025-02-15 18:03:59 UTC
-# Last Modified: 2025-02-15 18:03:59 UTC
+# Last Modified: 2025-06-11 13:35:00 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -11,15 +11,15 @@
 set -euo pipefail
 
 # Константы
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="1.1.0"
 readonly SCRIPT_AUTHOR="gopnikgame"
 readonly STATE_FILE="/var/tmp/xanmod_install_state"
 readonly LOG_FILE="/var/log/xanmod_install.log"
 readonly SYSCTL_CONFIG="/etc/sysctl.d/99-xanmod-bbr.conf"
 readonly SCRIPT_PATH="/usr/local/sbin/xanmod_install"
 readonly SERVICE_NAME="xanmod-install-continue"
-readonly CURRENT_DATE="2025-02-15 18:03:59"
-readonly CURRENT_USER="gopnikgame"
+readonly CURRENT_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+readonly CURRENT_USER=$(whoami)
 
 # Функция логирования
 log() {
@@ -175,10 +175,10 @@ select_kernel_version() {
         
         echo -e "\n\033[1;33m📦 Доступные версии ядра:\033[0m"
         echo "----------------------------------------"
-        echo -e "\033[1;36m1)\033[0m linux-xanmod         \033[1;32m(Рекомендуется)\033[0m"
-        echo -e "\033[1;36m2)\033[0m linux-xanmod-edge    \033[1;33m(Тестовая)\033[0m"
-        echo -e "\033[1;36m3)\033[0m linux-xanmod-rt      \033[1;35m(RT)\033[0m"
-        echo -e "\033[1;36m4)\033[0m linux-xanmod-lts     \033[1;34m(LTS)\033[0m"
+        echo -e "\033[1;36m1)\033[0m linux-xanmod         \033[1;32m(Рекомендуется, 6.14)\033[0m"
+        echo -e "\033[1;36m2)\033[0m linux-xanmod-edge    \033[1;33m(Тестовая, 6.15)\033[0m"
+        echo -e "\033[1;36m3)\033[0m linux-xanmod-rt      \033[1;35m(RT, 6.12)\033[0m"
+        echo -e "\033[1;36m4)\033[0m linux-xanmod-lts     \033[1;34m(LTS, 6.12)\033[0m"
         echo "----------------------------------------"
     } > /dev/tty
 
@@ -203,17 +203,18 @@ select_kernel_version() {
 install_kernel() {
     print_header "Установка ядра XanMod"
     
-    mkdir -p /etc/apt/trusted.gpg.d
+    # Создаем директории для ключей и репозиториев
+    mkdir -p /etc/apt/keyrings
     mkdir -p /etc/apt/sources.list.d
     
-    if [ ! -f "/etc/apt/trusted.gpg.d/xanmod-kernel.gpg" ]; then
+    if [ ! -f "/etc/apt/keyrings/xanmod-archive-keyring.gpg" ]; then
         log "Добавление репозитория XanMod..."
-        if ! curl -fsSL https://dl.xanmod.org/gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/xanmod-kernel.gpg; then
+        if ! wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -vo /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
             log_error "Ошибка при добавлении ключа"
             exit 1
         fi
         
-        if ! echo 'deb [signed-by=/etc/apt/trusted.gpg.d/xanmod-kernel.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-kernel.list; then
+        if ! echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | tee /etc/apt/sources.list.d/xanmod-release.list > /dev/null; then
             log_error "Ошибка при добавлении репозитория"
             exit 1
         fi
