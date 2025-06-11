@@ -164,20 +164,20 @@ check_package_availability() {
     log "Проверка доступности пакета: $package_name..."
     
     # Проверка доступности метапакетов
-    if apt-cache show "$package_name" &>/dev/null; then
+    if apt-cache show "$package_name" 2>/dev/null | grep -q "Package: $package_name"; then
         log "✓ Пакет $package_name доступен в репозитории"
         echo "$package_name"
         return 0
     fi
     
-    log_error "Пакет $package_name не найден в репозитории"
+    log "Пакет $package_name не найден, проверяем альтернативы..."
     
     # Проверка альтернативных версий
     if [[ "$package_name" == *"-x64v4" ]]; then
         local alt_package="${package_name/x64v4/x64v3}"
         log "Проверка наличия альтернативного пакета: $alt_package"
         
-        if apt-cache show "$alt_package" &>/dev/null; then
+        if apt-cache show "$alt_package" 2>/dev/null | grep -q "Package: $alt_package"; then
             log "✓ Найден альтернативный пакет: $alt_package"
             echo "$alt_package"
             return 0
@@ -186,65 +186,67 @@ check_package_availability() {
         local alt_package="${package_name/x64v3/x64v2}"
         log "Проверка наличия альтернативного пакета: $alt_package"
         
-        if apt-cache show "$alt_package" &>/dev/null; then
+        if apt-cache show "$alt_package" 2>/dev/null | grep -q "Package: $alt_package"; then
             log "✓ Найден альтернативный пакет: $alt_package"
             echo "$alt_package"
             return 0
         fi
     fi
     
-    # Если по названию не удалось найти метапакет, попробуем найти версию ядра напрямую
-    local kernel_version=""
+    # Поиск метапакетов по списку
+    log "Поиск доступных метапакетов..."
+    local available_metapackages=$(apt-cache search "^linux-xanmod-" | grep -v "headers\|image" | awk '{print $1}')
     
-    case "$package_name" in
-        linux-xanmod-x64v*)
-            kernel_version="6.14"
-            ;;
-        linux-xanmod-edge-x64v*)
-            kernel_version="6.15"
-            ;;
-        linux-xanmod-lts-x64v*)
-            kernel_version="6.12"
-            ;;
-    esac
-    
-    if [ -n "$kernel_version" ]; then
-        local psabi_version=$(echo "$package_name" | grep -o "x64v[0-9]")
-        local specific_package="linux-image-${kernel_version}.*-${psabi_version}-xanmod[0-9]"
-        
-        log "Поиск конкретной версии ядра: $specific_package"
-        local found_package=$(apt-cache search "$specific_package" | head -n 1 | awk '{print $1}')
-        
-        if [ -n "$found_package" ]; then
-            log "✓ Найден конкретный пакет: $found_package"
-            echo "$found_package"
-            return 0
-        fi
-    fi
-    
-    # Вывод доступных пакетов XanMod
-    log "Доступные метапакеты XanMod в репозитории:"
-    apt-cache search "^linux-xanmod-" | grep -v "headers\|image" | sort | tee -a "$LOG_FILE"
-    
-    # Если ни один из методов не нашёл пакет, вернём fallback на стандартное ядро
-    if [[ "$package_name" == *"-x64v"* ]]; then
-        local base_package="${package_name%-x64v*}"
-        if [[ "$base_package" == "linux-xanmod" ]]; then
-            log "Пробуем установить наиболее свежую версию XanMod..."
-            
-            # Поиск самой новой версии
-            local latest_xanmod=$(apt-cache search "linux-image-[0-9].*-x64v[23]-xanmod[0-9]" | sort -V | tail -n 1 | awk '{print $1}')
-            
-            if [ -n "$latest_xanmod" ]; then
-                log "✓ Найдена самая новая версия: $latest_xanmod"
-                echo "$latest_xanmod"
+    if [[ -n "$available_metapackages" ]]; then
+        # Выбираем наиболее подходящий метапакет
+        for meta in $available_metapackages; do
+            if [[ "$meta" == *"$package_name"* || "$package_name" == *"$meta"* ]]; then
+                log "✓ Найден подходящий метапакет: $meta"
+                echo "$meta"
                 return 0
             fi
-        fi
+        done
+        
+        # Если не нашли конкретного совпадения, используем первый доступный
+        local first_meta=$(echo "$available_metapackages" | head -n1)
+        log "✓ Используем доступный метапакет: $first_meta"
+        echo "$first_meta"
+        return 0
     fi
     
-    # Если ничего не найдено, вернём пустую строку
-    return 1
+    # Если не нашли метапакеты, ищем конкретные пакеты ядра
+    log "Поиск конкретных версий ядра..."
+    local psabi_version="x64v3"
+    
+    if [[ "$package_name" =~ x64v([1-4]) ]]; then
+        psabi_version=$(echo "$package_name" | grep -o "x64v[1-4]")
+    fi
+    
+    # Поиск наиболее свежей версии ядра с заданным PSABI
+    local latest_kernel=$(apt-cache search "linux-image-[0-9].*-${psabi_version}-xanmod[0-9]" | sort -Vr | head -n1 | awk '{print $1}')
+    
+    if [[ -n "$latest_kernel" ]]; then
+        log "✓ Найдена конкретная версия ядра: $latest_kernel"
+        echo "$latest_kernel"
+        return 0
+    fi
+    
+    # Попробуем найти хоть какую-то версию XanMod
+    local any_xanmod=$(apt-cache search "linux-image.*xanmod" | sort -Vr | head -n1 | awk '{print $1}')
+    
+    if [[ -n "$any_xanmod" ]]; then
+        log "✓ Найдена версия XanMod: $any_xanmod"
+        echo "$any_xanmod"
+        return 0
+    fi
+    
+    # Вывод доступных пакетов в лог
+    log "Доступные пакеты XanMod:"
+    apt-cache search "xanmod" | tee -a "$LOG_FILE"
+    
+    # Если ничего не найдено, возвращаем пустую строку с ошибкой
+    log_error "Не найдено подходящих пакетов XanMod"
+    echo ""
 }
 
 # Выбор версии ядра
@@ -310,40 +312,127 @@ install_kernel() {
             exit 1
         fi
         
-        if ! apt-get update -qq; then
+        log "Обновление списка пакетов..."
+        if ! apt-get update; then
             log_error "Ошибка при обновлении пакетов"
             exit 1
         fi
         log "✓ Репозиторий XanMod успешно добавлен"
     fi
 
+    # Проверяем доступные метапакеты XanMod
+    log "Проверка доступных пакетов XanMod..."
+    local available_packages=$(apt-cache search "^linux-xanmod-" | grep -v "headers\|image" | sort)
+    if [ -z "$available_packages" ]; then
+        log_error "Не найдены метапакеты XanMod. Проверка отдельных пакетов ядра..."
+        available_packages=$(apt-cache search "linux-image.*xanmod" | sort)
+        
+        if [ -z "$available_packages" ]; then
+            log_error "Не найдены пакеты ядра XanMod. Возможно, репозиторий недоступен или неправильно настроен."
+            log "Проверка доступности репозитория..."
+            curl -I http://deb.xanmod.org
+            exit 1
+        fi
+    fi
+    
+    log "Доступные пакеты XanMod:"
+    echo "$available_packages" | tee -a "$LOG_FILE"
+
+    # Выбор версии ядра
+    log "Выбор версии ядра..."
     local KERNEL_PACKAGE
     KERNEL_PACKAGE=$(select_kernel_version)
-
+    
     if [ -z "$KERNEL_PACKAGE" ]; then
         log_error "Ошибка: имя пакета пустое"
         exit 1
     fi
 
-    log "Проверка доступности выбранного пакета..."
-    local AVAILABLE_PACKAGE
-    AVAILABLE_PACKAGE=$(check_package_availability "$KERNEL_PACKAGE")
+    log "Выбран пакет: $KERNEL_PACKAGE"
     
-    # Если не удалось найти пакет, выводим список доступных пакетов
-    if [ -z "$AVAILABLE_PACKAGE" ]; then
-        log_error "Не удалось найти подходящий пакет для установки"
-        log "Доступные метапакеты XanMod в репозитории:"
-        apt-cache search "^linux-xanmod-" | grep -v "headers\|image" | sort
+    # Проверяем наличие выбранного пакета
+    if ! apt-cache show "$KERNEL_PACKAGE" >/dev/null 2>&1; then
+        log_error "Пакет $KERNEL_PACKAGE не найден в репозитории"
         
-        log "Доступные образы ядра XanMod:"
-        apt-cache search "linux-image.*xanmod" | head -n 20
+        # Проверка альтернативных версий
+        log "Поиск альтернативных версий..."
         
-        exit 1
-    elif [ "$AVAILABLE_PACKAGE" != "$KERNEL_PACKAGE" ]; then
-        log "Выбранный пакет недоступен, будет установлен альтернативный: $AVAILABLE_PACKAGE"
-        KERNEL_PACKAGE="$AVAILABLE_PACKAGE"
+        # Сначала проверяем метапакеты без psABI суффикса
+        local base_package
+        if [[ "$KERNEL_PACKAGE" == *"-x64v"* ]]; then
+            base_package="${KERNEL_PACKAGE%-x64v*}"
+            log "Проверка базового пакета: $base_package"
+            
+            if apt-cache show "$base_package" >/dev/null 2>&1; then
+                log "✓ Найден базовый пакет: $base_package"
+                KERNEL_PACKAGE="$base_package"
+            fi
+        fi
+        
+        # Если и базовый пакет не найден, ищем другие версии psABI
+        if ! apt-cache show "$KERNEL_PACKAGE" >/dev/null 2>&1; then
+            local psabi_versions=("x64v3" "x64v2" "x64v1")
+            
+            for version in "${psabi_versions[@]}"; do
+                if [[ "$KERNEL_PACKAGE" == *"-x64v"* ]]; then
+                    local alt_package="${KERNEL_PACKAGE/-x64v[1-4]/-$version}"
+                    log "Проверка альтернативной версии: $alt_package"
+                    
+                    if apt-cache show "$alt_package" >/dev/null 2>&1; then
+                        log "✓ Найден альтернативный пакет: $alt_package"
+                        KERNEL_PACKAGE="$alt_package"
+                        break
+                    fi
+                fi
+            done
+        fi
+        
+        # Если все еще не найден пакет, ищем любой подходящий образ ядра
+        if ! apt-cache show "$KERNEL_PACKAGE" >/dev/null 2>&1; then
+            log "Поиск любого доступного ядра XanMod..."
+            local kernel_type
+            
+            if [[ "$KERNEL_PACKAGE" == *"edge"* ]]; then
+                kernel_type="edge"
+            elif [[ "$KERNEL_PACKAGE" == *"rt"* ]]; then
+                kernel_type="rt"
+            elif [[ "$KERNEL_PACKAGE" == *"lts"* ]]; then
+                kernel_type="lts"
+            else
+                kernel_type=""
+            fi
+            
+            # Ищем последнюю версию образа ядра
+            local latest_kernel
+            if [ -n "$kernel_type" ]; then
+                latest_kernel=$(apt-cache search "linux-image-.*-${kernel_type}-.*xanmod" | sort -Vr | head -n1 | awk '{print $1}')
+            else
+                latest_kernel=$(apt-cache search "linux-image-.*xanmod" | grep -v "edge\|rt\|lts" | sort -Vr | head -n1 | awk '{print $1}')
+            fi
+            
+            if [ -n "$latest_kernel" ]; then
+                log "✓ Найден образ ядра: $latest_kernel"
+                KERNEL_PACKAGE="$latest_kernel"
+            else
+                # Крайний случай - выводим список и предлагаем выбрать вручную
+                log_error "Не удалось автоматически выбрать пакет ядра"
+                echo -e "\n\033[1;33mДоступные пакеты XanMod:\033[0m"
+                apt-cache search "linux.*xanmod" | sort
+                
+                read -rp $'\033[1;33mВведите точное имя пакета для установки или нажмите Enter для выхода: \033[0m' manual_package
+                
+                if [ -n "$manual_package" ]; then
+                    KERNEL_PACKAGE="$manual_package"
+                    log "Выбран пакет вручную: $KERNEL_PACKAGE"
+                else
+                    log "Установка отменена пользователем"
+                    exit 1
+                fi
+            fi
+        fi
     fi
 
+    log "Подготовка к установке пакета: $KERNEL_PACKAGE"
     echo -e "\n\033[1;33mУстановка пакета: ${KERNEL_PACKAGE}\033[0m"
     apt-get update -qq
 
@@ -357,18 +446,71 @@ install_kernel() {
 
     # Установка с явным указанием конфигурации GRUB
     export DEBIAN_FRONTEND=noninteractive
-    # Если это метапакет - устанавливаем его
+    
+    # Определяем тип пакета и устанавливаем соответствующие пакеты
     if [[ "$KERNEL_PACKAGE" =~ ^linux-xanmod ]]; then
+        # Установка метапакета
+        log "Установка метапакета XanMod: $KERNEL_PACKAGE"
         if ! apt-get install -y "$KERNEL_PACKAGE" grub-pc; then
-            log_error "Ошибка при установке ядра"
-            exit 1
+            log_error "Ошибка при установке метапакета. Попытка установки конкретных пакетов..."
+            
+            # Если метапакет не устанавливается, попробуем найти конкретную версию ядра
+            local kernel_version
+            local kernel_prefix
+            
+            if [[ "$KERNEL_PACKAGE" == *"-edge"* ]]; then
+                kernel_prefix="edge"
+            elif [[ "$KERNEL_PACKAGE" == *"-rt"* ]]; then
+                kernel_prefix="rt"
+            elif [[ "$KERNEL_PACKAGE" == *"-lts"* ]]; then
+                kernel_prefix="lts"
+            else
+                kernel_prefix=""
+            fi
+            
+            local psabi_version="x64v3"
+            if [[ "$KERNEL_PACKAGE" == *"-x64v"* ]]; then
+                psabi_version=$(echo "$KERNEL_PACKAGE" | grep -o "x64v[1-4]")
+            fi
+            
+            # Ищем подходящий образ ядра
+            local image_package
+            if [ -n "$kernel_prefix" ]; then
+                image_package=$(apt-cache search "linux-image-.*-${psabi_version}-.*${kernel_prefix}.*xanmod" | sort -Vr | head -n1 | awk '{print $1}')
+            else
+                image_package=$(apt-cache search "linux-image-.*-${psabi_version}-.*xanmod" | grep -v "edge\|rt\|lts" | sort -Vr | head -n1 | awk '{print $1}')
+            fi
+            
+            if [ -n "$image_package" ]; then
+                local headers_package="${image_package/image/headers}"
+                log "Установка образа ядра: $image_package и заголовков: $headers_package"
+                
+                if ! apt-get install -y "$image_package" "$headers_package" grub-pc; then
+                    log_error "Ошибка при установке ядра"
+                    exit 1
+                fi
+            else
+                log_error "Не удалось найти подходящие пакеты ядра"
+                exit 1
+            fi
         fi
-    # Если это конкретное ядро - устанавливаем ядро и заголовки
     else
+        # Установка конкретного образа ядра
+        log "Установка конкретного образа ядра: $KERNEL_PACKAGE"
         local headers_package="${KERNEL_PACKAGE/linux-image/linux-headers}"
-        if ! apt-get install -y "$KERNEL_PACKAGE" "$headers_package" grub-pc; then
-            log_error "Ошибка при установке ядра"
-            exit 1
+        
+        if apt-cache show "$headers_package" >/dev/null 2>&1; then
+            log "Установка ядра и заголовков: $KERNEL_PACKAGE, $headers_package"
+            if ! apt-get install -y "$KERNEL_PACKAGE" "$headers_package" grub-pc; then
+                log_error "Ошибка при установке ядра"
+                exit 1
+            fi
+        else
+            log "Заголовки не найдены, установка только образа ядра: $KERNEL_PACKAGE"
+            if ! apt-get install -y "$KERNEL_PACKAGE" grub-pc; then
+                log_error "Ошибка при установке ядра"
+                exit 1
+            fi
         fi
     fi
 
@@ -380,6 +522,10 @@ install_kernel() {
 
     echo "kernel_installed" > "$STATE_FILE"
     log "✓ Ядро успешно установлено"
+    
+    # Показываем информацию о установленном ядре
+    log "Установленные пакеты ядра XanMod:"
+    dpkg -l | grep xanmod | tee -a "$LOG_FILE"
 }
 
 # Настройка BBR
