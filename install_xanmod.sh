@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Version: 1.1.0
+# Version: 1.2.0
 # Author: gopnikgame
 # Created: 2025-02-15 18:03:59 UTC
-# Last Modified: 2025-06-11 13:35:00 UTC
+# Last Modified: 2025-06-11 15:45:00 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # Константы
-readonly SCRIPT_VERSION="1.1.0"
+readonly SCRIPT_VERSION="1.2.0"
 readonly SCRIPT_AUTHOR="gopnikgame"
 readonly STATE_FILE="/var/tmp/xanmod_install_state"
 readonly LOG_FILE="/var/log/xanmod_install.log"
@@ -146,7 +146,9 @@ get_psabi_version() {
     flags=$(grep -m1 flags /proc/cpuinfo | cut -d ':' -f 2 | tr -d ' \n\t\r')
     
     if [[ $flags =~ avx512 ]]; then 
-        level=4
+        # Для AVX-512 используем v3, так как метапакета x64v4 нет в репозитории
+        level=3
+        log "Обнаружена поддержка AVX-512, используется оптимизация x64v3 (максимальная поддерживаемая)"
     elif [[ $flags =~ avx2 ]]; then 
         level=3
     elif [[ $flags =~ sse4_2 ]]; then 
@@ -154,6 +156,47 @@ get_psabi_version() {
     fi
     
     printf 'x64v%d' "$level"
+}
+
+# Функция для проверки доступности пакета
+check_package_availability() {
+    local package_name="$1"
+    log "Проверка доступности пакета: $package_name..."
+    
+    if apt-cache show "$package_name" &>/dev/null; then
+        log "✓ Пакет $package_name доступен в репозитории"
+        echo "$package_name"
+        return 0
+    else
+        log_error "Пакет $package_name не найден в репозитории"
+        
+        # Проверка альтернативных версий
+        if [[ "$package_name" == *"-x64v4" ]]; then
+            local alt_package="${package_name/x64v4/x64v3}"
+            log "Проверка наличия альтернативного пакета: $alt_package"
+            
+            if apt-cache show "$alt_package" &>/dev/null; then
+                log "✓ Найден альтернативный пакет: $alt_package"
+                echo "$alt_package"
+                return 0
+            fi
+        elif [[ "$package_name" == *"-x64v3" ]]; then
+            local alt_package="${package_name/x64v3/x64v2}"
+            log "Проверка наличия альтернативного пакета: $alt_package"
+            
+            if apt-cache show "$alt_package" &>/dev/null; then
+                log "✓ Найден альтернативный пакет: $alt_package"
+                echo "$alt_package"
+                return 0
+            fi
+        fi
+        
+        # Вывод доступных пакетов XanMod
+        log "Доступные метапакеты XanMod в репозитории:"
+        apt-cache search "^linux-xanmod-" | grep -v "headers\|image" | sort
+        
+        return 1
+    fi
 }
 
 # Выбор версии ядра
@@ -232,6 +275,18 @@ install_kernel() {
     if [ -z "$KERNEL_PACKAGE" ]; then
         log_error "Ошибка: имя пакета пустое"
         exit 1
+    fi
+
+    log "Проверка доступности выбранного пакета..."
+    local AVAILABLE_PACKAGE
+    AVAILABLE_PACKAGE=$(check_package_availability "$KERNEL_PACKAGE")
+    
+    if [ -z "$AVAILABLE_PACKAGE" ]; then
+        log_error "Не удалось найти подходящий пакет для установки"
+        exit 1
+    elif [ "$AVAILABLE_PACKAGE" != "$KERNEL_PACKAGE" ]; then
+        log "Выбранный пакет недоступен, будет установлен альтернативный: $AVAILABLE_PACKAGE"
+        KERNEL_PACKAGE="$AVAILABLE_PACKAGE"
     fi
 
     echo -e "\n\033[1;33mУстановка пакета: ${KERNEL_PACKAGE}\033[0m"
