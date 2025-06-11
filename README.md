@@ -1,7 +1,7 @@
-# 🚀 Server Scripts Manager v1.0.11
+# 🚀 Server Scripts Manager v1.0.12
 
-![Version](https://img.shields.io/badge/version-1.0.11-blue)
-![Updated](https://img.shields.io/badge/updated-2025--02--21-green)
+![Version](https://img.shields.io/badge/version-1.0.12-blue)
+![Updated](https://img.shields.io/badge/updated-2025--06--11-green)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 
 ## 📋 О проекте
@@ -34,9 +34,13 @@ wget -qO server_launcher.sh https://raw.githubusercontent.com/gopnikgame/Server_
 - ⚙️ Оптимизация системных параметров
 
 ### 3. XanMod Kernel (install_xanmod.sh)
-- 🚄 Установка оптимизированного ядра
+- 🚄 Установка оптимизированного ядра версии 1.2.1
 - 📈 Настройка BBR3
 - ⚡ Оптимизация производительности
+- 🌐 Поддержка версий ядра 6.14 и 6.15
+- 🔄 Планировщик очереди fq_pie
+- ⚙️ Оптимизации для сетей 10Gbit+
+- 🔒 ECN и оптимизация TCP
 
 ### 4. BBR Monitor (bbr_info.sh)
 - 📊 Мониторинг BBR
@@ -134,6 +138,8 @@ uname -r
 sysctl net.ipv4.tcp_congestion_control
 ```
 
+# Проверка ECN
+sysctl net.ipv4.tcp_ecn
 ## 🔄 Обновления
 
 Для обновления всех компонентов:
@@ -153,6 +159,6 @@ MIT License © 2025 gopnikgame
 
 ## 🔄 Последнее обновление
 
-- Версия: 1.0.11
-- Дата: 2025-02-21
+- Версия: 1.0.12
+- Дата: 2025-06-11
 - Автор: gopnikgame
