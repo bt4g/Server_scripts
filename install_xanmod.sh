@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Version: 1.2.1
+# Version: 1.2.2
 # Author: gopnikgame
 # Created: 2025-02-15 18:03:59 UTC
-# Last Modified: 2025-06-11 16:20:00 UTC
+# Last Modified: 2025-07-22 10:00:00 UTC
 # Description: XanMod kernel installation script with BBR3 optimization
 # Repository: https://github.com/gopnikgame/Server_scripts
 # License: MIT
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # Константы
-readonly SCRIPT_VERSION="1.2.1"
+readonly SCRIPT_VERSION="1.2.2"
 readonly SCRIPT_AUTHOR="gopnikgame"
 readonly STATE_FILE="/var/tmp/xanmod_install_state"
 readonly LOG_FILE="/var/log/xanmod_install.log"
@@ -107,6 +107,11 @@ check_os() {
             ;;
     esac
     
+    if ! command -v lsb_release &> /dev/null; then
+        log_error "Команда 'lsb_release' не найдена. Установите пакет 'lsb-release'."
+        exit 1
+    fi
+
     if [ "$(uname -m)" != "x86_64" ]; then
         log_error "Поддерживается только архитектура x86_64"
         exit 1
@@ -268,7 +273,7 @@ select_kernel_version() {
         
         echo -e "\n\033[1;33m📦 Доступные версии ядра:\033[0m"
         echo "----------------------------------------"
-        echo -e "\033[1;36m1)\033[0m linux-xanmod         \033[1;32m(Рекомендуется, 6.14)\033[0m"
+        echo -e "\033[1;36m1)\033[0m linux-xanmod         \033[1;32m(Рекомендуется, 6.15)\033[0m"
         echo -e "\033[1;36m2)\033[0m linux-xanmod-edge    \033[1;33m(Тестовая, 6.15)\033[0m"
         echo -e "\033[1;36m3)\033[0m linux-xanmod-rt      \033[1;35m(RT, 6.12)\033[0m"
         echo -e "\033[1;36m4)\033[0m linux-xanmod-lts     \033[1;34m(LTS, 6.12)\033[0m"
@@ -307,7 +312,10 @@ install_kernel() {
             exit 1
         fi
         
-        if ! echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | tee /etc/apt/sources.list.d/xanmod-release.list > /dev/null; then
+        local codename
+        codename=$(lsb_release -sc)
+        log "Обнаружено кодовое имя дистрибутива: $codename"
+        if ! echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $codename main" | tee /etc/apt/sources.list.d/xanmod-release.list > /dev/null; then
             log_error "Ошибка при добавлении репозитория"
             exit 1
         fi
