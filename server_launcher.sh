@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Version: 1.0.3
+# Version: 1.0.6
 # Author: gopnikgame
 # Created: 2025-02-20 18:16:21
-# Last Modified: 2025-02-20 18:16:21
+# Last Modified: 2025-02-20 21:00:00
 # Current User: gopnikgame
 
 # Цветовые коды
@@ -19,7 +19,7 @@ SCRIPT_DIR="/root/server-scripts"
 MODULES_DIR="/usr/local/server-scripts/modules"
 LOG_DIR="/var/log/server-scripts"
 GITHUB_RAW="https://raw.githubusercontent.com/gopnikgame/Server_scripts/main"
-SCRIPT_VERSION="1.0.4"
+SCRIPT_VERSION="1.0.6"
 SCRIPT_NAME="server_launcher.sh"
 
 # Определяем порядок модулей с помощью индексированного массива
@@ -27,7 +27,9 @@ declare -a MODULE_ORDER=(
     "ubuntu_pre_install.sh"
     "install_xanmod.sh"
     "bbr_info.sh"
+    "snapfile.sh"
     "speed_dns.sh"
+    "auto_update_vps.sh"
 )
 
 # Ассоциативный массив с описаниями (как было раньше)
@@ -35,7 +37,9 @@ declare -A MODULES=(
     ["ubuntu_pre_install.sh"]="Первоначальная настройка Ubuntu 24.04"
     ["install_xanmod.sh"]="Установка XanMod Kernel с BBR3"
     ["bbr_info.sh"]="Проверка и настройка конфигурации BBR"
+    ["snapfile.sh"]="Управление файлом подкачки (Swap)"
     ["speed_dns.sh"]="Проверка DNS"
+    ["auto_update_vps.sh"]="Автоматическое обновление VPS"
 )
 
 # Функции для красивого вывода
